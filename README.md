@@ -22,4 +22,5 @@ bun run build.ts   # writes the single-file app to index.html
 - `src/ar/sensor-provider.ts`: gyro + compass + step + GPS tracker (heading seed and fallback)
 - `vio/`, `coi-sw.js`: vendored visloc-rs browser build, MIT OR Apache-2.0 (see `vio/NOTICE.md`)
 - `src/ar/engine.ts`: rendering, anchors, sun lighting, shadows
+- `src/together.ts`, `src/net/`: shared places over Nostr (kinds 37517 place, 37518 object state, 25517 live/presence/signalling), two-point alignment (`src/ar/shared-frame.ts`), optional WebRTC peer-to-peer for live updates
 - `src/objects/`: the three example objects

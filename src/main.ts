@@ -3,6 +3,7 @@ import { DemoTrackingProvider } from "./ar/demo-provider";
 import { SensorTrackingProvider } from "./ar/sensor-provider";
 import { VioTrackingProvider, openVioCamera } from "./ar/vio-provider";
 import { EighthWallProvider } from "./ar/eighthwall-provider";
+import { DEFAULT_RELAYS, initTogether } from "./together";
 import type { ProviderConfig, TrackingProvider, WalkMode } from "./ar/types";
 import { createBeacon } from "./objects/beacon";
 import { createChest } from "./objects/chest";
@@ -12,7 +13,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const STORE = "spyglass.anchors.v1";
 const PREFS = "spyglass.prefs.v1";
 
-const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, tracker: "8thwall" as "8thwall" | "visloc" | "compass", absolute: false, sharp: false, points: true, ...load(PREFS) };
+const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, tracker: "8thwall" as "8thwall" | "visloc" | "compass", absolute: false, sharp: false, points: true, relays: DEFAULT_RELAYS, p2p: false, ...load(PREFS) };
 const cfg: ProviderConfig = { eyeHeight: prefs.eye, declination: 2.5, headingTrim: prefs.trim, stepLength: 0.7, walkMode: prefs.walk };
 
 function load(key: string): any {
@@ -122,6 +123,7 @@ async function begin(forceDemo: boolean) {
   const feed = demo ? null : provider instanceof EighthWallProvider ? $<HTMLCanvasElement>("cam") : video;
   engine = new AREngine({ canvas: $<HTMLCanvasElement>("gl"), video: feed, provider, cameraFov: fov });
   engine.showLandmarks = prefs.points;
+  (window as any).spyglass = { engine }; // handle for debugging from the console
   if (provider instanceof VioTrackingProvider) {
     $<HTMLInputElement>("fov").value = String(Math.round(fov * 2) / 2);
     $("fov-v").textContent = `${fov.toFixed(1)}° (calibrated)`;
@@ -163,7 +165,16 @@ function placeAround() {
   persist();
 }
 
+const together = initTogether({
+  engine: () => engine,
+  prefs,
+  savePrefs: () => save(PREFS, prefs),
+  toast,
+  onRemoteChange: () => syncAdjust(),
+});
+
 function persist() {
+  for (const a of engine.anchors) together.share(a);
   const out = engine.anchors.map((a) => ({ id: a.id, yaw: a.yaw, y: a.group.position.y, scale: a.userScale, ...(engine.geoOf(a) ?? {}) }));
   if (out.every((o: any) => typeof o.lat === "number")) save(STORE, out);
 }
@@ -335,7 +346,7 @@ $("gl").addEventListener("touchstart", (e) => {
   if (e.touches.length === 2 && engine) pinch = { d: spread(e), s: engine.anchors[selected].userScale };
 }, { passive: true });
 $("gl").addEventListener("touchmove", (e) => {
-  if (pinch && e.touches.length === 2) (engine.anchors[selected].setScale((pinch.s * spread(e)) / pinch.d), syncAdjust());
+  if (pinch && e.touches.length === 2) (engine.anchors[selected].setScale((pinch.s * spread(e)) / pinch.d), syncAdjust(), together.share(engine.anchors[selected]));
 }, { passive: true });
 $("gl").addEventListener("touchend", () => {
   if (pinch) (pinch = null), persist();

@@ -80,7 +80,15 @@ h1 span{color:var(--gold)}
 .chip[data-q=good]::before{background:#5dff8a;box-shadow:0 0 8px #5dff8a}
 .chip[data-q=limited]::before{background:var(--gold)}
 #gear{position:absolute;top:calc(74px + var(--st));right:12px;width:42px;height:42px;border-radius:50%;display:grid;place-items:center}
-#gear svg{width:21px;height:21px;fill:none;stroke:var(--parch);stroke-width:1.7}
+#gear svg,#together svg{width:21px;height:21px;fill:none;stroke:var(--parch);stroke-width:1.7;stroke-linecap:round}
+#together{position:absolute;top:calc(124px + var(--st));right:12px;width:42px;height:42px;border-radius:50%;display:grid;place-items:center}
+#mp-chip{position:absolute;top:calc(84px + var(--st));left:12px;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mp-chip[hidden],#mark[hidden]{display:none}
+#mark{position:absolute;left:12px;right:12px;top:calc(180px + var(--st));padding:12px 14px;border-radius:16px;font-size:13.5px;line-height:1.4}
+#mark p{margin:0 0 10px}#mark span{color:rgba(244,231,197,.65);font-size:12px}
+#mark div{display:flex;gap:8px}
+#mark-go{flex:1;padding:12px;border-radius:12px;font-family:var(--serif);font-weight:600;font-size:15px;color:#201400;background:linear-gradient(180deg,#ffe29a,#f0b03c)}
+#mark-cancel{padding:12px 14px;border-radius:12px;border:1px solid var(--line)}
 .bottom{position:absolute;left:0;right:0;bottom:0;padding:26px 12px calc(12px + var(--sb));display:flex;flex-direction:column;gap:10px;pointer-events:none!important;
   background:linear-gradient(rgba(5,12,19,0),rgba(5,12,19,.78))}
 .bottom>*{pointer-events:auto}
@@ -113,9 +121,9 @@ h1 span{color:var(--gold)}
 .tog button.sel{border-color:var(--gold);color:var(--gold);background:rgba(60,42,8,.5)}
 
 /* sheet */
-#sheet{position:fixed;left:0;right:0;bottom:0;z-index:30;border-radius:22px 22px 0 0;padding:16px 18px calc(18px + var(--sb));max-height:82vh;overflow:auto;touch-action:pan-y;background:rgba(7,18,28,.9)}
-#sheet[hidden]{display:none}
-#sheet h2{font-family:var(--serif);font-size:20px;margin:0;font-weight:600}
+#sheet,#mp{position:fixed;left:0;right:0;bottom:0;z-index:30;border-radius:22px 22px 0 0;padding:16px 18px calc(18px + var(--sb));max-height:82vh;overflow:auto;touch-action:pan-y;background:rgba(7,18,28,.9)}
+#sheet[hidden],#mp[hidden],#mp-in[hidden],#mp-lobby[hidden]{display:none}
+#sheet h2,#mp h2{font-family:var(--serif);font-size:20px;margin:0;font-weight:600}
 .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 #close{font-size:14px;color:var(--gold);padding:8px}
 label{display:flex;justify-content:space-between;font-size:13.5px;margin:14px 0 4px}
@@ -128,6 +136,16 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .two button{padding:12px;border-radius:12px;border:1px solid var(--line);font-size:13.5px}
 #debug{margin:14px 0 0;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.35);font:11px/1.55 ui-monospace,Menlo,monospace;color:rgba(244,231,197,.8);white-space:pre-wrap;overflow-wrap:anywhere}
+#mp input[type=text]{width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.3);color:var(--parch);font:inherit;font-size:15px;margin-top:6px;-webkit-user-select:text;user-select:text}
+#mp input::placeholder{color:rgba(244,231,197,.4)}
+#mp .wide{width:100%;margin-top:10px;padding:13px;border-radius:12px;font-family:var(--serif);font-weight:600;font-size:15px;color:#201400;background:linear-gradient(180deg,#ffe29a,#f0b03c)}
+#mp .row2{display:flex;gap:8px;align-items:stretch}#mp .row2 input{flex:1}#mp .row2 button{margin-top:6px;padding:0 18px;border-radius:12px;border:1px solid var(--gold);color:var(--gold)}
+#mp-status{font-size:11.5px;color:rgba(244,231,197,.6);margin:-6px 0 4px;font-variant-numeric:tabular-nums}
+#mp-near{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+#mp-near button{display:flex;justify-content:space-between;gap:10px;padding:11px 12px;border-radius:12px;border:1px solid var(--line);text-align:left;font-size:14px}
+#mp-near span{color:rgba(244,231,197,.6);font-size:12px;white-space:nowrap}
+#mp-place{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:12px;background:rgba(0,0,0,.3);font-size:13px}
+#mp-place b{font-family:var(--serif);font-size:18px}#mp-place code{font:600 16px ui-monospace,Menlo,monospace;color:var(--gold);letter-spacing:.12em}
 @media (prefers-reduced-motion:reduce){.rose{animation:none}}
 </style>
 </head>
@@ -165,6 +183,9 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
     </div>
   </div>
   <button id="gear" class="glass" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
+  <button id="together" class="glass" aria-label="Play together"><svg viewBox="0 0 24 24"><circle cx="8.5" cy="8" r="3"/><circle cx="16.5" cy="9" r="2.4"/><path d="M2.5 19c.6-3.4 3-5 6-5s5.4 1.6 6 5M15 14.2c2.6-.3 5 .9 6.3 4.3"/></svg></button>
+  <span id="mp-chip" class="chip glass" data-q="good" hidden></span>
+  <div id="mark" class="glass" hidden><p id="mark-text"></p><div><button id="mark-go">Mark</button><button id="mark-cancel">Cancel</button></div></div>
   <div id="toast" class="glass"></div>
   <div id="coach" class="glass"></div>
   <div class="bottom">
@@ -202,6 +223,32 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   <p class="hint">Steps + GPS moves you one stride per detected step and lets GPS correct slowly. Anchors hold still whenever you do.</p>
   <div class="two"><button id="around">Drop anchors around me</button><button id="restore">Restore saved coordinates</button></div>
   <pre id="debug"></pre>
+</div>
+<div id="mp" class="glass" hidden>
+  <div class="head"><h2>Play together</h2><button id="mp-close" style="font-size:14px;color:var(--gold);padding:8px">Done</button></div>
+  <p id="mp-status"></p>
+  <div id="mp-in">
+    <div id="mp-place"></div>
+    <label>Live updates travel by</label>
+    <div class="seg" id="mp-transport" style="grid-template-columns:1fr 1fr"><button data-v="relay">Relays</button><button data-v="p2p">Peer-to-peer</button></div>
+    <p class="hint">Relays always hold the saved state of the place. Peer-to-peer sends live movement directly between phones when a connection can be made, and falls back to relays when it can't.</p>
+    <div class="two"><button id="mp-remark">Mark points again</button><button id="mp-leave">Leave place</button></div>
+  </div>
+  <div id="mp-lobby">
+    <label>Create a place here</label>
+    <input type="text" id="mp-name" placeholder="Name, e.g. Bench by the lake" maxlength="60" autocomplete="off">
+    <input type="text" id="mp-a" placeholder="Point A, e.g. left front leg of the bench" maxlength="80" autocomplete="off">
+    <input type="text" id="mp-b" placeholder="Point B, e.g. right front leg of the bench" maxlength="80" autocomplete="off">
+    <p class="hint">Pick two fixed spots on the ground at least a metre apart that anyone can find again. Every player marks the same two, and that is what lines the phones up.</p>
+    <button class="wide" id="mp-create">Create and mark points</button>
+    <label>Join with a code</label>
+    <div class="row2"><input type="text" id="mp-code" placeholder="5-letter code" maxlength="8" autocapitalize="none" autocomplete="off"><button id="mp-join">Join</button></div>
+    <label>Places nearby</label>
+    <div id="mp-near"></div>
+    <label>Relays</label>
+    <input type="text" id="mp-relays" autocapitalize="none" autocomplete="off" spellcheck="false">
+    <p class="hint">Comma-separated. Places, objects and your player key are published to these relays and are publicly readable there.</p>
+  </div>
 </div>
 <script>/*BUNDLE*/</script>
 </body>

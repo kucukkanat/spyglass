@@ -35,6 +35,13 @@ export class Anchor {
     this.group.visible = true;
     this.born = -1;
   }
+  /** Moves the object without replaying its spawn animation (used for remote updates). */
+  set(pos: THREE.Vector3, yawRad: number, scale: number) {
+    this.group.position.copy(pos);
+    this.group.rotation.y = yawRad;
+    this.group.visible = true;
+    this.setScale(scale);
+  }
   setScale(k: number) {
     this.userScale = THREE.MathUtils.clamp(k, 0.1, 6);
     this.shadow.scale.setScalar(this.userScale);

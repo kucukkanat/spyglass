@@ -2,6 +2,7 @@ import { AREngine, type Anchor } from "./ar/engine";
 import { DemoTrackingProvider } from "./ar/demo-provider";
 import { SensorTrackingProvider } from "./ar/sensor-provider";
 import { VioTrackingProvider, openVioCamera } from "./ar/vio-provider";
+import { EighthWallProvider } from "./ar/eighthwall-provider";
 import type { ProviderConfig, TrackingProvider, WalkMode } from "./ar/types";
 import { createBeacon } from "./objects/beacon";
 import { createChest } from "./objects/chest";
@@ -11,7 +12,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const STORE = "spyglass.anchors.v1";
 const PREFS = "spyglass.prefs.v1";
 
-const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, vio: true, sharp: false, points: true, ...load(PREFS) };
+const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, tracker: "8thwall" as "8thwall" | "visloc" | "compass", absolute: false, sharp: false, points: true, ...load(PREFS) };
 const cfg: ProviderConfig = { eyeHeight: prefs.eye, declination: 2.5, headingTrim: prefs.trim, stepLength: 0.7, walkMode: prefs.walk };
 
 function load(key: string): any {
@@ -22,7 +23,8 @@ function save(key: string, v: unknown) {
 }
 
 let engine: AREngine;
-let provider: SensorTrackingProvider | DemoTrackingProvider | VioTrackingProvider;
+let provider: SensorTrackingProvider | DemoTrackingProvider | VioTrackingProvider | EighthWallProvider;
+const visual = () => provider instanceof VioTrackingProvider || provider instanceof EighthWallProvider;
 let selected = 0;
 let placing = false;
 let placedOnce = false;
@@ -64,8 +66,9 @@ async function begin(forceDemo: boolean) {
     // Sensor permission must be requested first, inside the tap.
     granted = await SensorTrackingProvider.requestPermissions();
     try {
-      if (prefs.vio) await openVioCamera(video, prefs.sharp);
-      else await startCamera(video);
+      // The 8th Wall engine opens the camera itself.
+      if (prefs.tracker === "visloc") await openVioCamera(video, prefs.sharp);
+      else if (prefs.tracker === "compass") await startCamera(video);
     } catch {
       demo = true;
       toast("Camera unavailable: showing the preview scene instead.", 5000);
@@ -77,7 +80,22 @@ async function begin(forceDemo: boolean) {
     // Desktop browsers expose the API but never fire events.
     await new Promise((r) => setTimeout(r, 900));
     if (!sp.live) sp.stop();
-    else if (prefs.vio) {
+    else if (prefs.tracker === "8thwall") {
+      sp.cfg = Object.assign(Object.create(cfg), { walkMode: "locked" });
+      const xr = new EighthWallProvider(cfg, $<HTMLCanvasElement>("cam"), sp, prefs.absolute);
+      provider = xr;
+      document.body.classList.add("xr");
+      xr.start().catch(async (err) => {
+        console.warn("8th Wall start failed:", err?.message ?? err);
+        xr.stop();
+        document.body.classList.remove("xr");
+        sp.cfg = cfg;
+        engine.provider = provider = sp;
+        engine.start();
+        toast(`8th Wall tracking unavailable (${err?.message ?? err}). Using compass tracking.`, 7000);
+        try { await startCamera(video); engine.resize(); } catch {}
+      });
+    } else if (prefs.tracker === "visloc") {
       // The compass tracker keeps running underneath: it seeds the heading and covers gaps.
       sp.cfg = Object.assign(Object.create(cfg), { walkMode: "locked" });
       const vio = new VioTrackingProvider(cfg, video, sp);
@@ -91,6 +109,9 @@ async function begin(forceDemo: boolean) {
     } else provider = sp;
   }
   if (!provider) {
+    if (!demo && prefs.tracker === "8thwall") {
+      try { await startCamera(video); } catch { demo = true; }
+    }
     provider = new DemoTrackingProvider(cfg, $("gl"));
     await provider.start();
     if (!demo) toast("No motion sensors: drag to look around.", 5000);
@@ -98,7 +119,8 @@ async function begin(forceDemo: boolean) {
   document.body.classList.toggle("demo", demo);
 
   const fov = provider instanceof VioTrackingProvider ? provider.cameraFov : prefs.fov;
-  engine = new AREngine({ canvas: $<HTMLCanvasElement>("gl"), video: demo ? null : video, provider, cameraFov: fov });
+  const feed = demo ? null : provider instanceof EighthWallProvider ? $<HTMLCanvasElement>("cam") : video;
+  engine = new AREngine({ canvas: $<HTMLCanvasElement>("gl"), video: feed, provider, cameraFov: fov });
   engine.showLandmarks = prefs.points;
   if (provider instanceof VioTrackingProvider) {
     $<HTMLInputElement>("fov").value = String(Math.round(fov * 2) / 2);
@@ -114,15 +136,15 @@ async function begin(forceDemo: boolean) {
 
   if (provider instanceof DemoTrackingProvider) placeAround();
   else {
-    if (!(provider instanceof VioTrackingProvider)) toast("Hold the phone upright and look around slowly while the compass settles…", 4000);
+    if (!visual()) toast("Hold the phone upright and look around slowly while the compass settles…", 4000);
     const wait = setInterval(() => {
-      const ready = provider instanceof VioTrackingProvider ? provider.settled && provider.state.dof === 6 : provider.state.quality !== "none";
+      const ready = provider instanceof VioTrackingProvider || provider instanceof EighthWallProvider ? provider.settled && provider.state.dof === 6 : provider.state.quality !== "none";
       if (ready && !placedOnce) {
         clearInterval(wait);
         setTimeout(() => {
           placeAround();
           toast("Three anchors dropped. Walk around them.");
-        }, provider instanceof VioTrackingProvider ? 600 : 1800);
+        }, visual() ? 600 : 1800);
       }
     }, 200);
   }
@@ -132,7 +154,7 @@ function placeAround() {
   const st = provider.state;
   provider.recenter();
   // Visual tracking is usually tried at room scale first, so keep the objects close.
-  const k = provider instanceof VioTrackingProvider ? 0.5 : 1;
+  const k = visual() ? 0.5 : 1;
   for (const [i, o] of LAYOUT.entries()) {
     const b = ((st.heading + o.bearing) * Math.PI) / 180;
     engine.anchors[i].place(st.position.x + Math.sin(b) * o.dist * k, -st.position.z + Math.cos(b) * o.dist * k, st.heading + o.bearing + ((o as any).turn ?? 0));
@@ -214,6 +236,9 @@ function hud(t: number) {
     const g = engine.geoOf(sel);
     $("debug").textContent = [
       `tracker   ${provider.name}`,
+      ...(provider instanceof EighthWallProvider
+        ? [`8th wall  ${provider.info.status} ${provider.info.reason} · ${provider.info.scale} scale · ${st.dof}DoF`, `          camera ${provider.info.camera} · engine ${provider.info.version}`]
+        : []),
       ...(provider instanceof VioTrackingProvider
         ? [
             `vio       ${provider.status} · ${provider.info.fps.toFixed(0)} Hz · ${provider.info.ms.toFixed(0)} ms · ${provider.info.points} pts · ${provider.info.resets} resets`,
@@ -371,7 +396,15 @@ document.querySelectorAll<HTMLElement>("#walk button").forEach((b) => {
   });
 });
 
-for (const key of ["vio", "sharp", "points"] as const) {
+document.querySelectorAll<HTMLElement>("#tracker button").forEach((b) => {
+  b.classList.toggle("sel", b.dataset.v === prefs.tracker);
+  b.addEventListener("click", () => {
+    prefs.tracker = b.dataset.v as typeof prefs.tracker;
+    save(PREFS, prefs);
+    location.reload();
+  });
+});
+for (const key of ["absolute", "sharp", "points"] as const) {
   const b = $(`t-${key}`);
   b.classList.toggle("sel", prefs[key]);
   b.addEventListener("click", () => {

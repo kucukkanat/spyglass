@@ -16,6 +16,8 @@ bun run build.ts   # writes the single-file app to index.html
 ## Layout
 
 - `src/ar/types.ts`: `TrackingProvider` interface (the seam for WebXR and WASM VIO providers)
+- `src/ar/eighthwall-provider.ts`: 6DoF tracker on the 8th Wall XR Engine binary (default on iOS)
+- `external/xr/`: the unmodified 8th Wall XR Engine binary. Closed source, © 2026 Niantic Spatial, Inc., under the XR Engine License Agreement (`external/xr/LICENSE`); not covered by this repo's own licence
 - `src/ar/vio-provider.ts`: 6DoF visual-inertial tracker (visloc-rs WebAssembly in `vio/`), sparse map points, floor fit and surface hits
 - `src/ar/sensor-provider.ts`: gyro + compass + step + GPS tracker (heading seed and fallback)
 - `vio/`, `coi-sw.js`: vendored visloc-rs browser build, MIT OR Apache-2.0 (see `vio/NOTICE.md`)

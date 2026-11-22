@@ -7,17 +7,30 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#07121c">
 <title>Spyglass AR</title>
+<!-- This product includes the XR Engine software developed by Niantic Spatial, Inc.
+Copyright © 2026 Niantic Spatial, Inc. All rights reserved.
+License: https://github.com/8thwall/engine/blob/main/LICENSE -->
 <script>
-// Wasm threads need a cross-origin isolated page; static hosts cannot send the headers,
-// so a service worker adds them from the next load on (one reload at most per tab session).
-if (!self.crossOriginIsolated && window.isSecureContext && navigator.serviceWorker) {
-  navigator.serviceWorker.register("coi-sw.js").then(() => navigator.serviceWorker.ready).then(() => {
-    if (!sessionStorage.getItem("coi-reloaded")) {
-      sessionStorage.setItem("coi-reloaded", "1");
-      location.reload();
-    }
-  }, (err) => console.warn("cross-origin isolation service worker:", err));
-}
+// Only the visloc-rs tracker needs a cross-origin isolated page (wasm threads); a service worker
+// adds the headers on static hosts. Any other tracker runs without it, so it is removed again.
+(function () {
+  var tracker = "8thwall";
+  try { tracker = (JSON.parse(localStorage.getItem("spyglass.prefs.v1") || "{}") || {}).tracker || tracker; } catch (e) {}
+  if (!window.isSecureContext || !navigator.serviceWorker) return;
+  if (tracker === "visloc") {
+    if (self.crossOriginIsolated) return;
+    navigator.serviceWorker.register("coi-sw.js").then(function () { return navigator.serviceWorker.ready; }).then(function () {
+      if (!sessionStorage.getItem("coi-reloaded")) { sessionStorage.setItem("coi-reloaded", "1"); location.reload(); }
+    }, function (err) { console.warn("cross-origin isolation service worker:", err); });
+  } else {
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      if (!regs.length) return;
+      Promise.all(regs.map(function (r) { return r.unregister(); })).then(function () {
+        if (self.crossOriginIsolated && !sessionStorage.getItem("coi-removed")) { sessionStorage.setItem("coi-removed", "1"); location.reload(); }
+      });
+    });
+  }
+})();
 </script>
 <style>
 :root{--ink:#07121c;--panel:rgba(9,22,34,.62);--line:rgba(244,231,197,.22);--parch:#f4e7c5;--gold:#ffd36b;--teal:#7fe9ff;--red:#ff6b57;
@@ -25,7 +38,8 @@ if (!self.crossOriginIsolated && window.isSecureContext && navigator.serviceWork
   --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--ink);color:var(--parch);font-family:var(--sans);-webkit-user-select:none;user-select:none;touch-action:none}
-#video,#gl,#sky{position:fixed;inset:0;width:100%;height:100%}
+#video,#gl,#sky,#cam{position:fixed;inset:0;width:100%;height:100%}
+#cam{display:none}body.xr #cam{display:block}body.xr #video{display:none}
 #video{object-fit:cover}
 #sky{display:none;background:linear-gradient(#141d3a 0%,#3a3f6e 28%,#c9787a 46%,#f3b27a 51.5%,#2c4a5c 52%,#16303f 70%,#0c1e2a 100%)}
 body.demo #sky{display:block}body.demo #video{display:none}
@@ -48,6 +62,8 @@ h1 span{color:var(--gold)}
 .ghost{font-size:14px;color:rgba(244,231,197,.6);text-decoration:underline;text-underline-offset:3px;padding:10px}
 .needs{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;font-size:12px;color:rgba(244,231,197,.7)}
 .needs span{padding:5px 10px;border-radius:999px;border:1px solid var(--line)}
+.legal{position:absolute;left:20px;right:20px;bottom:calc(10px + var(--sb));margin:0;font-size:10.5px;line-height:1.4;color:rgba(244,231,197,.42)}
+.legal a{color:inherit}
 #warn{color:var(--red);font-size:13px;max-width:32ch}
 
 /* hud */
@@ -118,6 +134,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
 <body>
 <video id="video" playsinline muted autoplay></video>
 <div id="sky"></div>
+<canvas id="cam"></canvas>
 <canvas id="gl"></canvas>
 
 <div id="start">
@@ -135,6 +152,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   <p id="warn" hidden>This page is not on HTTPS, so the camera and sensors are blocked. Host it on an https:// address.</p>
   <button class="cta" id="go">Raise the spyglass</button>
   <button class="ghost" id="preview">Preview without camera</button>
+  <p class="legal">AR tracking uses the XR Engine developed by Niantic Spatial, Inc. © 2026 Niantic Spatial, Inc. Provided as is, without warranties, under the <a href="https://github.com/8thwall/engine/blob/main/LICENSE">XR Engine License Agreement</a>.</p>
 </div>
 
 <div id="hud">
@@ -166,8 +184,9 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
 <div id="sheet" class="glass" hidden>
   <div class="head"><h2>Calibration</h2><button id="close">Done</button></div>
   <label>Tracking</label>
-  <div class="tog"><button id="t-vio">Visual 6DoF</button><button id="t-sharp">Sharp camera</button><button id="t-points">Map points</button></div>
-  <p class="hint">Visual 6DoF tracks the camera image so objects stay pinned as you walk. Sharp camera looks better but may track worse. The first two reload the page.</p>
+  <div class="seg" id="tracker"><button data-v="8thwall">8th Wall</button><button data-v="visloc">visloc-rs</button><button data-v="compass">Compass only</button></div>
+  <div class="tog"><button id="t-absolute">True scale</button><button id="t-sharp">Sharp camera</button><button id="t-points">Map points</button></div>
+  <p class="hint">Changing tracker reloads the page. True scale (8th Wall) measures real distances but needs a few seconds of side-to-side motion first; without it, size follows the phone-height setting. Sharp camera and Map points apply to visloc-rs.</p>
   <label>Camera field of view <output id="fov-v"></output></label>
   <input type="range" id="fov" min="48" max="80" step="0.5">
   <p class="hint">If objects slide against the background when you pan, adjust this until they stick. With visual tracking on, this also recalibrates the tracker (it restarts) and is saved for this phone.</p>
@@ -175,7 +194,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   <input type="range" id="trim" min="-30" max="30" step="0.5">
   <label>Phone height above floor <output id="eye-v"></output></label>
   <input type="range" id="eye" min="1" max="1.9" step="0.05">
-  <p class="hint">Set this to how high you hold the phone. Until the floor is detected, the floor is assumed this far below the phone, so lower it if objects float and raise it if they sink.</p>
+  <p class="hint">Set this to how high you hold the phone. With 8th Wall it sets the scale of the world when tracking starts (reload to apply). With visloc-rs it places the floor until one is detected.</p>
   <label>Walking</label>
   <div class="seg" id="walk">
     <button data-v="steps+gps">Steps + GPS</button><button data-v="gps">GPS only</button><button data-v="locked">Stand still</button>

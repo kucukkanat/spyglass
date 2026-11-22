@@ -42,6 +42,11 @@ export interface TrackingProvider {
   /** Instruction to show the player while tracking is not established. */
   readonly coach?: string | null;
   recenter?(): void;
+  /** Camera projection (column-major 4x4) when the tracker knows the lens; otherwise the engine derives one. */
+  readonly projectionMatrix?: ArrayLike<number> | null;
+  /** True when the tracker runs the frame loop itself and calls `onRender` each frame. */
+  readonly drivesLoop?: boolean;
+  onRender?: (() => void) | null;
 }
 
 export interface ProviderConfig {

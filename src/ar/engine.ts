@@ -61,7 +61,8 @@ export class Anchor {
 
 export interface EngineOptions {
   canvas: HTMLCanvasElement;
-  video: HTMLVideoElement | null;
+  /** Camera image to match lighting against: the video element, or the canvas a tracker draws the feed into. */
+  video: HTMLVideoElement | HTMLCanvasElement | null;
   provider: TrackingProvider;
   /** FOV of the camera stream along its long side, degrees. */
   cameraFov: number;
@@ -79,7 +80,7 @@ export class AREngine {
   fps = 0;
   onFrame: ((t: number) => void) | null = null;
 
-  private video: HTMLVideoElement | null;
+  private video: HTMLVideoElement | HTMLCanvasElement | null;
   private sunLight = new THREE.DirectionalLight(0xfff1dc, 2.4);
   private hemi = new THREE.HemisphereLight(0xcfe4ff, 0x6b5a45, 0.9);
   private shadowMat = new THREE.ShadowMaterial({ opacity: 0.38 });
@@ -199,7 +200,8 @@ export class AREngine {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // Match the virtual camera to the cropped (object-fit: cover) camera stream.
-    const v = this.video;
+    if (this.provider.projectionMatrix) return; // the tracker supplies the projection
+    const v = this.video instanceof HTMLVideoElement ? this.video : null;
     const vw = v?.videoWidth || (w > h ? 1920 : 1080);
     const vh = v?.videoHeight || (w > h ? 1080 : 1920);
     const scale = Math.max(w / vw, h / vh);
@@ -234,7 +236,7 @@ export class AREngine {
     }
     // Match ambient colour/brightness and shadow contrast to the live camera image.
     const v = this.video;
-    if (v && v.readyState >= 2 && this.probeCtx && now - this.lastProbe > 450) {
+    if (v && (!(v instanceof HTMLVideoElement) || v.readyState >= 2) && this.probeCtx && now - this.lastProbe > 450) {
       this.lastProbe = now;
       try {
         this.probeCtx.drawImage(v, 0, 0, 16, 16);
@@ -263,15 +265,29 @@ export class AREngine {
     }
   }
 
+  private frames = 0;
+  private acc = 0;
+
+  /** Runs our own loop, or hands it to a tracker that drives frames itself. */
   start() {
-    let frames = 0, acc = 0;
-    this.renderer.setAnimationLoop(() => {
+    this.renderer.setAnimationLoop(null);
+    for (const p of [this.provider]) if (p.drivesLoop) return void (p.onRender = () => this.frame());
+    this.renderer.setAnimationLoop(() => this.frame());
+  }
+
+  frame() {
+    {
       const dt = Math.min(this.clock.getDelta(), 0.1);
       const t = this.clock.elapsedTime;
       this.provider.update(dt);
       const st = this.provider.state;
       this.camera.position.copy(st.position);
       this.camera.quaternion.copy(st.quaternion);
+      const pm = this.provider.projectionMatrix;
+      if (pm) {
+        this.camera.projectionMatrix.fromArray(pm as number[]);
+        this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
+      }
       this.updateLighting(performance.now());
       const lm = this.provider.landmarks;
       this.cloud.visible = this.showLandmarks && !!lm;
@@ -296,9 +312,9 @@ export class AREngine {
       }
       this.onFrame?.(t);
       this.renderer.render(this.scene, this.camera);
-      frames++; acc += dt;
-      if (acc >= 0.5) { this.fps = frames / acc; frames = 0; acc = 0; }
-    });
+      this.frames++; this.acc += dt;
+      if (this.acc >= 0.5) { this.fps = this.frames / this.acc; this.frames = 0; this.acc = 0; }
+    }
   }
 }
 

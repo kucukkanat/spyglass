@@ -13,6 +13,8 @@ export interface ARObject {
 export class Anchor {
   readonly group = new THREE.Group();
   private born = -1;
+  userScale = 1;
+  private shadow: THREE.Mesh;
   distance = 0;
   bearing = 0; // relative to camera heading, degrees (+ = right)
   constructor(public id: string, public name: string, public object: ARObject, blob: THREE.Texture) {
@@ -23,6 +25,7 @@ export class Anchor {
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.006;
     shadow.renderOrder = -1;
+    this.shadow = shadow;
     this.group.add(shadow, object.root);
     this.group.visible = false;
   }
@@ -31,6 +34,13 @@ export class Anchor {
     this.group.rotation.y = -THREE.MathUtils.degToRad(yawDeg);
     this.group.visible = true;
     this.born = -1;
+  }
+  setScale(k: number) {
+    this.userScale = THREE.MathUtils.clamp(k, 0.1, 6);
+    this.shadow.scale.setScalar(this.userScale);
+  }
+  lift(d: number) {
+    this.group.position.y += d;
   }
   get en() {
     return { e: this.group.position.x, n: -this.group.position.z };
@@ -44,7 +54,7 @@ export class Anchor {
     const a = Math.min(1, (t - this.born) / 0.9);
     // back-out ease for a little "pop" on spawn
     const s = a < 1 ? 1 + 2.7 * Math.pow(a - 1, 3) + 1.7 * Math.pow(a - 1, 2) : 1;
-    this.object.root.scale.setScalar(Math.max(0.001, s));
+    this.object.root.scale.setScalar(Math.max(0.001, s * this.userScale));
     this.object.update(t, dt);
   }
 }
@@ -91,7 +101,7 @@ export class AREngine {
     this.cameraFov = opts.cameraFov;
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, alpha: true, antialias: true, powerPreference: "high-performance" }));
     r.setClearColor(0x000000, 0);
-    r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.0;
     r.shadowMap.enabled = true;
@@ -103,13 +113,13 @@ export class AREngine {
 
     const s = this.sunLight;
     s.castShadow = true;
-    s.shadow.mapSize.set(2048, 2048);
+    s.shadow.mapSize.set(1024, 1024);
     s.shadow.bias = -0.0004;
     s.shadow.normalBias = 0.02;
     s.shadow.radius = 5;
     const c = s.shadow.camera;
-    c.left = c.bottom = -14;
-    c.right = c.top = 14;
+    c.left = c.bottom = -9;
+    c.right = c.top = 9;
     c.near = 1;
     c.far = 90;
     this.scene.add(s, s.target, this.hemi);

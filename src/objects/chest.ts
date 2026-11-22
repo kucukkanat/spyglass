@@ -93,11 +93,9 @@ export function createChest(): ARObject {
 
   const glow = glowSprite(0xffb640, 1.5, 0.55);
   glow.position.set(0, H + 0.2, 0);
-  const light = new THREE.PointLight(0xffb040, 2.2, 3.5, 2);
-  light.position.set(0, H + 0.25, 0);
   const sp = sparkles(36, 0.4, 1.3, 0xffe29a, 0.07);
   sp.points.position.y = H;
-  root.add(glow, light, sp.points);
+  root.add(glow, sp.points);
 
   return {
     root,
@@ -106,7 +104,6 @@ export function createChest(): ARObject {
       sp.update(dt);
       lid.rotation.x = -1.05 + Math.sin(t * 1.3) * 0.04;
       glow.material.opacity = 0.5 + Math.sin(t * 2.4) * 0.12;
-      light.intensity = 2.2 + Math.sin(t * 2.4) * 0.5;
     },
   };
 }

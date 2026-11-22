@@ -73,11 +73,9 @@ export function createBeacon(): ARObject {
     new THREE.MeshBasicMaterial({ map: beamTex, color: 0x66e8ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
   );
   beam.position.y = 1.35 + 4.5;
-  const light = new THREE.PointLight(0x4fdcff, 3, 5, 2);
-  light.position.y = 1.35;
   const sp = sparkles(50, 0.55, 2.6, 0x9ff6ff, 0.06);
   sp.points.position.y = 0.6;
-  root.add(beam, light, sp.points);
+  root.add(beam, sp.points);
 
   return {
     root,
@@ -98,7 +96,6 @@ export function createBeacon(): ARObject {
       crystalM.emissiveIntensity = 0.9 + pulse * 0.6;
       core.material.opacity = 0.55 + pulse * 0.3;
       (beam.material as THREE.MeshBasicMaterial).opacity = 0.35 + pulse * 0.2;
-      light.intensity = 2.4 + pulse * 1.4;
     },
   };
 }

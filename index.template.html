@@ -77,6 +77,12 @@ h1 span{color:var(--gold)}
 .nm{font-family:var(--serif);font-size:12.5px;line-height:1.15;text-align:center;min-height:2.3em;display:flex;align-items:center}
 .meta{display:flex;align-items:center;gap:5px;font-size:13px;font-variant-numeric:tabular-nums}
 .arrow{width:14px;height:14px;fill:var(--parch);transition:transform .12s linear}
+.adjust{display:flex;align-items:center;justify-content:center;gap:6px;padding:6px 10px;border-radius:14px;font-size:12.5px}
+.adjust span{color:rgba(244,231,197,.65)}
+.adjust b{min-width:3.2em;text-align:center;font-variant-numeric:tabular-nums;font-weight:600}
+.adjust i{width:1px;height:20px;background:var(--line);margin:0 6px}
+.adjust button{width:38px;height:34px;border-radius:10px;border:1px solid var(--line);font-size:18px;line-height:1}
+.adjust button:active{background:rgba(255,211,107,.25)}
 .actions{display:flex;gap:8px}
 #move{flex:1;padding:14px;border-radius:14px;font-family:var(--serif);font-size:16px;font-weight:600;color:#201400;background:linear-gradient(180deg,#ffe29a,#f0b03c)}
 #cancel{padding:14px 18px;border-radius:14px}
@@ -145,6 +151,11 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   <div id="coach" class="glass"></div>
   <div class="bottom">
     <div id="cards"></div>
+    <div class="adjust glass">
+      <span>Size</span><button id="size-dn" aria-label="Smaller">−</button><b id="size-v">100%</b><button id="size-up" aria-label="Bigger">+</button>
+      <i></i>
+      <span>Height</span><button id="lower" aria-label="Lower">↓</button><button id="raise" aria-label="Raise">↑</button>
+    </div>
     <div class="actions">
       <button id="move">Move</button>
       <button id="cancel" class="glass" hidden>Cancel</button>
@@ -164,7 +175,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   <input type="range" id="trim" min="-30" max="30" step="0.5">
   <label>Phone height above floor <output id="eye-v"></output></label>
   <input type="range" id="eye" min="1" max="1.9" step="0.05">
-  <p class="hint">Set this to how high you hold the phone. Visual tracking uses it to check its sense of scale, so it drives how big objects look.</p>
+  <p class="hint">Set this to how high you hold the phone. Until the floor is detected, the floor is assumed this far below the phone, so lower it if objects float and raise it if they sink.</p>
   <label>Walking</label>
   <div class="seg" id="walk">
     <button data-v="steps+gps">Steps + GPS</button><button data-v="gps">GPS only</button><button data-v="locked">Stand still</button>

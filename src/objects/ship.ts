@@ -134,9 +134,7 @@ export function createShip(): ARObject {
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.02;
-  const light = new THREE.PointLight(0x58ffe0, 2.5, 5, 2);
-  light.position.y = 0.7;
-  root.add(wake, ring, light);
+  root.add(wake, ring);
 
   const flags = ship.children.filter((c) => c.userData.flag) as THREE.Mesh[];
   return {

@@ -150,6 +150,7 @@ export class VioTrackingProvider implements TrackingProvider {
   private repeated = 0;
   private skipRepeats = true;
   private lastFrameTime = 0;
+  private lastPosted = -Infinity;
   private videoLatencyMs = 15;
   private recentSync: number[] = [];
   private syncApplied = 0;
@@ -361,7 +362,9 @@ export class VioTrackingProvider implements TrackingProvider {
       imuFromCamera: [...imuFromCameraRotation(screenAngle()), ...CAMERA_OFFSET],
       imuRateHz: Math.max(20, Math.round(this.motionPeriod > 0 ? 1000 / this.motionPeriod : 60)),
       ...IMU_DEFAULT,
-      frameRateHz: fps >= 50 ? 60 : 30,
+      // The camera runs at 60 fps for short exposures, but only every other frame is tracked:
+      // half the load, and a phone that stays cool drops fewer frames.
+      frameRateHz: 30,
     };
     this.info.frame = `${this.frameW}x${this.frameH} @ ${Math.round(fps)} fps`;
     this.info.timeOffsetMs = this.calib.timeOffsetMs;
@@ -380,6 +383,7 @@ export class VioTrackingProvider implements TrackingProvider {
     if (this.landmarks) (this.landmarks.count = 0), this.landmarks.version++;
     this.status = "wait";
     this.inflight = 0;
+    this.lastPosted = -Infinity;
     if (!this.running) {
       this.running = true;
       this.scheduleFrame();
@@ -423,7 +427,9 @@ export class VioTrackingProvider implements TrackingProvider {
       const latency = performance.now() - meta.captureTime;
       if (latency > 0 && latency < 200) this.videoLatencyMs += 0.05 * (latency - this.videoLatencyMs);
     }
+    if (t - this.lastPosted < 25) return; // track at 30 Hz
     if (this.inflight >= 2 || !this.rig) return; // the worker is behind
+    this.lastPosted = t;
     this.ctx.drawImage(this.video, 0, 0, this.frameW, this.frameH);
     const rgba = this.ctx.getImageData(0, 0, this.frameW, this.frameH).data;
     const gray = new Uint8Array(this.frameW * this.frameH);
@@ -626,7 +632,21 @@ export class VioTrackingProvider implements TrackingProvider {
     peaks.sort((a, b) => b.n - a.n);
     const kept: { y: number; n: number }[] = [];
     for (const p of peaks) if (kept.every((q) => Math.abs(q.y - p.y) > 0.2)) kept.push(p);
-    const floor = kept.filter((p) => cam.y - p.y > 0.9 && cam.y - p.y < 2.1).sort((a, b) => a.y - b.y)[0];
+    // The floor is the lowest surface: plain floors give few points, so a small cluster is enough
+    // as long as almost nothing lies below it.
+    let floor: { y: number; n: number } | undefined;
+    const ks = [...hist.keys()].sort((a, b) => a - b);
+    let under = 0;
+    for (const k of ks) {
+      const c = hist.get(k)!, nSum = c + (hist.get(k + 1) ?? 0) + (hist.get(k + 2) ?? 0);
+      const y = (k * c + (k + 1) * (hist.get(k + 1) ?? 0) + (k + 2) * (hist.get(k + 2) ?? 0)) / nSum * BIN;
+      if (nSum >= 8 && under <= 0.25 * nSum && cam.y - y > 0.8 && cam.y - y < 2.2) {
+        floor = kept.find((p) => Math.abs(p.y - y) < 0.12) ?? { y, n: nSum };
+        break;
+      }
+      under += c;
+      if (under > 12) break; // too much below: this view has no clear lowest surface
+    }
     if (floor) {
       this.info.floor = true;
       const camHeight = cam.y - floor.y;
@@ -683,6 +703,14 @@ export class VioTrackingProvider implements TrackingProvider {
       point.copy(origin).addScaledVector(dir, depth);
     }
     return { point, depth };
+  }
+
+  /** Without a detected floor, the floor is wherever the configured phone height puts it. */
+  setEyeHeight(prev: number, next: number) {
+    if (!this.info.floor && this.aligned) {
+      this.offset.y += next - prev;
+      this.projectMap();
+    }
   }
 
   recenter() {}

@@ -142,7 +142,7 @@ function placeAround() {
 }
 
 function persist() {
-  const out = engine.anchors.map((a) => ({ id: a.id, yaw: a.yaw, y: a.group.position.y, ...(engine.geoOf(a) ?? {}) }));
+  const out = engine.anchors.map((a) => ({ id: a.id, yaw: a.yaw, y: a.group.position.y, scale: a.userScale, ...(engine.geoOf(a) ?? {}) }));
   if (out.every((o: any) => typeof o.lat === "number")) save(STORE, out);
 }
 
@@ -152,7 +152,7 @@ function restore() {
   if (!provider.state.geoOrigin) return toast("Waiting for a GPS fix first…");
   for (const s of saved) {
     const a = engine.anchors.find((x) => x.id === s.id);
-    if (a) engine.placeGeo(a, s, s.yaw, s.y ?? 0);
+    if (a) engine.placeGeo(a, s, s.yaw, s.y ?? 0), a.setScale(s.scale ?? 1);
   }
   placedOnce = true;
   toast("Anchors restored from saved coordinates (GPS-accurate, not centimetre-accurate).", 4500);
@@ -174,7 +174,12 @@ function buildCards() {
   );
   syncCards();
 }
+function syncAdjust() {
+  const a = engine?.anchors[selected];
+  if (a) $("size-v").textContent = `${Math.round(a.userScale * 100)}%`;
+}
 function syncCards() {
+  syncAdjust();
   document.querySelectorAll(".card").forEach((c, i) => c.classList.toggle("sel", i === selected));
   $("move").textContent = placing ? "Drop it here" : `Move ${LAYOUT[selected].name}`;
   $("cancel").hidden = !placing;
@@ -287,6 +292,30 @@ $("move").addEventListener("click", () => {
   }
   syncCards();
 });
+// Size and height of the selected object: buttons, or pinch with two fingers.
+const adjust = (fn: (a: Anchor) => void) => () => {
+  const a = engine.anchors[selected];
+  if (!a.group.visible) return;
+  fn(a);
+  syncAdjust();
+  persist();
+};
+$("size-dn").addEventListener("click", adjust((a) => a.setScale(a.userScale / 1.15)));
+$("size-up").addEventListener("click", adjust((a) => a.setScale(a.userScale * 1.15)));
+$("lower").addEventListener("click", adjust((a) => a.lift(-0.05)));
+$("raise").addEventListener("click", adjust((a) => a.lift(0.05)));
+let pinch: { d: number; s: number } | null = null;
+const spread = (e: TouchEvent) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+$("gl").addEventListener("touchstart", (e) => {
+  if (e.touches.length === 2 && engine) pinch = { d: spread(e), s: engine.anchors[selected].userScale };
+}, { passive: true });
+$("gl").addEventListener("touchmove", (e) => {
+  if (pinch && e.touches.length === 2) (engine.anchors[selected].setScale((pinch.s * spread(e)) / pinch.d), syncAdjust());
+}, { passive: true });
+$("gl").addEventListener("touchend", () => {
+  if (pinch) (pinch = null), persist();
+});
+
 $("cancel").addEventListener("click", () => {
   placing = false;
   engine.reticle.visible = false;
@@ -329,7 +358,10 @@ slider("fov", "fov", "°", (v) => {
   }
 });
 slider("trim", "trim", "°", (v) => (cfg.headingTrim = v));
-slider("eye", "eye", " m", (v) => (cfg.eyeHeight = v));
+slider("eye", "eye", " m", (v) => {
+  if (provider instanceof VioTrackingProvider) provider.setEyeHeight(cfg.eyeHeight, v);
+  cfg.eyeHeight = v;
+});
 document.querySelectorAll<HTMLElement>("#walk button").forEach((b) => {
   b.classList.toggle("sel", b.dataset.v === prefs.walk);
   b.addEventListener("click", () => {

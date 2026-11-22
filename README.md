@@ -16,6 +16,8 @@ bun run build.ts   # writes the single-file app to index.html
 ## Layout
 
 - `src/ar/types.ts`: `TrackingProvider` interface (the seam for WebXR and WASM VIO providers)
-- `src/ar/sensor-provider.ts`: gyro + compass + step + GPS tracker
+- `src/ar/vio-provider.ts`: 6DoF visual-inertial tracker (visloc-rs WebAssembly in `vio/`), sparse map points, floor fit and surface hits
+- `src/ar/sensor-provider.ts`: gyro + compass + step + GPS tracker (heading seed and fallback)
+- `vio/`, `coi-sw.js`: vendored visloc-rs browser build, MIT OR Apache-2.0 (see `vio/NOTICE.md`)
 - `src/ar/engine.ts`: rendering, anchors, sun lighting, shadows
 - `src/objects/`: the three example objects

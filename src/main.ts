@@ -1,7 +1,8 @@
 import { AREngine, type Anchor } from "./ar/engine";
 import { DemoTrackingProvider } from "./ar/demo-provider";
 import { SensorTrackingProvider } from "./ar/sensor-provider";
-import type { ProviderConfig, WalkMode } from "./ar/types";
+import { VioTrackingProvider, openVioCamera } from "./ar/vio-provider";
+import type { ProviderConfig, TrackingProvider, WalkMode } from "./ar/types";
 import { createBeacon } from "./objects/beacon";
 import { createChest } from "./objects/chest";
 import { createShip } from "./objects/ship";
@@ -10,7 +11,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const STORE = "spyglass.anchors.v1";
 const PREFS = "spyglass.prefs.v1";
 
-const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, ...load(PREFS) };
+const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, vio: true, sharp: false, points: true, ...load(PREFS) };
 const cfg: ProviderConfig = { eyeHeight: prefs.eye, declination: 2.5, headingTrim: prefs.trim, stepLength: 0.7, walkMode: prefs.walk };
 
 function load(key: string): any {
@@ -21,7 +22,7 @@ function save(key: string, v: unknown) {
 }
 
 let engine: AREngine;
-let provider: SensorTrackingProvider | DemoTrackingProvider;
+let provider: SensorTrackingProvider | DemoTrackingProvider | VioTrackingProvider;
 let selected = 0;
 let placing = false;
 let placedOnce = false;
@@ -63,7 +64,8 @@ async function begin(forceDemo: boolean) {
     // Sensor permission must be requested first, inside the tap.
     granted = await SensorTrackingProvider.requestPermissions();
     try {
-      await startCamera(video);
+      if (prefs.vio) await openVioCamera(video, prefs.sharp);
+      else await startCamera(video);
     } catch {
       demo = true;
       toast("Camera unavailable: showing the preview scene instead.", 5000);
@@ -74,8 +76,19 @@ async function begin(forceDemo: boolean) {
     await sp.start();
     // Desktop browsers expose the API but never fire events.
     await new Promise((r) => setTimeout(r, 900));
-    if (sp.live) provider = sp;
-    else sp.stop();
+    if (!sp.live) sp.stop();
+    else if (prefs.vio) {
+      // The compass tracker keeps running underneath: it seeds the heading and covers gaps.
+      sp.cfg = Object.assign(Object.create(cfg), { walkMode: "locked" });
+      const vio = new VioTrackingProvider(cfg, video, sp);
+      provider = vio;
+      vio.start().catch((err) => {
+        vio.stop();
+        sp.cfg = cfg;
+        engine.provider = provider = sp;
+        toast(`Visual tracking unavailable (${err?.message ?? err}). Using compass tracking.`, 7000);
+      });
+    } else provider = sp;
   }
   if (!provider) {
     provider = new DemoTrackingProvider(cfg, $("gl"));
@@ -84,7 +97,13 @@ async function begin(forceDemo: boolean) {
   }
   document.body.classList.toggle("demo", demo);
 
-  engine = new AREngine({ canvas: $<HTMLCanvasElement>("gl"), video: demo ? null : video, provider, cameraFov: prefs.fov });
+  const fov = provider instanceof VioTrackingProvider ? provider.cameraFov : prefs.fov;
+  engine = new AREngine({ canvas: $<HTMLCanvasElement>("gl"), video: demo ? null : video, provider, cameraFov: fov });
+  engine.showLandmarks = prefs.points;
+  if (provider instanceof VioTrackingProvider) {
+    $<HTMLInputElement>("fov").value = String(Math.round(fov * 2) / 2);
+    $("fov-v").textContent = `${fov.toFixed(1)}° (calibrated)`;
+  }
   video.addEventListener("resize", () => engine.resize());
   for (const o of LAYOUT) engine.addAnchor(o.id, o.name, o.make());
   buildCards();
@@ -95,14 +114,15 @@ async function begin(forceDemo: boolean) {
 
   if (provider instanceof DemoTrackingProvider) placeAround();
   else {
-    toast("Hold the phone upright and look around slowly while the compass settles…", 4000);
+    if (!(provider instanceof VioTrackingProvider)) toast("Hold the phone upright and look around slowly while the compass settles…", 4000);
     const wait = setInterval(() => {
-      if (provider.state.quality !== "none" && !placedOnce) {
+      const ready = provider instanceof VioTrackingProvider ? provider.state.dof === 6 : provider.state.quality !== "none";
+      if (ready && !placedOnce) {
         clearInterval(wait);
         setTimeout(() => {
           placeAround();
           toast("Three anchors dropped. Walk around them.");
-        }, 1800);
+        }, provider instanceof VioTrackingProvider ? 600 : 1800);
       }
     }, 200);
   }
@@ -111,16 +131,18 @@ async function begin(forceDemo: boolean) {
 function placeAround() {
   const st = provider.state;
   provider.recenter();
+  // Visual tracking is usually tried at room scale first, so keep the objects close.
+  const k = provider instanceof VioTrackingProvider ? 0.5 : 1;
   for (const [i, o] of LAYOUT.entries()) {
     const b = ((st.heading + o.bearing) * Math.PI) / 180;
-    engine.anchors[i].place(Math.sin(b) * o.dist, Math.cos(b) * o.dist, st.heading + o.bearing + ((o as any).turn ?? 0));
+    engine.anchors[i].place(st.position.x + Math.sin(b) * o.dist * k, -st.position.z + Math.cos(b) * o.dist * k, st.heading + o.bearing + ((o as any).turn ?? 0));
   }
   placedOnce = true;
   persist();
 }
 
 function persist() {
-  const out = engine.anchors.map((a) => ({ id: a.id, yaw: a.yaw, ...(engine.geoOf(a) ?? {}) }));
+  const out = engine.anchors.map((a) => ({ id: a.id, yaw: a.yaw, y: a.group.position.y, ...(engine.geoOf(a) ?? {}) }));
   if (out.every((o: any) => typeof o.lat === "number")) save(STORE, out);
 }
 
@@ -130,7 +152,7 @@ function restore() {
   if (!provider.state.geoOrigin) return toast("Waiting for a GPS fix first…");
   for (const s of saved) {
     const a = engine.anchors.find((x) => x.id === s.id);
-    if (a) engine.placeGeo(a, s, s.yaw);
+    if (a) engine.placeGeo(a, s, s.yaw, s.y ?? 0);
   }
   placedOnce = true;
   toast("Anchors restored from saved coordinates (GPS-accurate, not centimetre-accurate).", 4500);
@@ -176,7 +198,10 @@ function hud(t: number) {
   });
   const q = $("q");
   q.dataset.q = st.quality;
-  q.textContent = provider instanceof DemoTrackingProvider ? "Preview mode" : st.quality === "good" ? "Compass locked" : st.quality === "limited" ? "Compass settling" : "No sensors";
+  q.textContent = (provider as TrackingProvider).statusText ?? (provider instanceof DemoTrackingProvider ? "Preview mode" : st.quality === "good" ? "Compass locked" : st.quality === "limited" ? "Compass settling" : "No sensors");
+  const coach = (provider as TrackingProvider).coach ?? null;
+  $("coach").textContent = coach ?? "";
+  $("coach").classList.toggle("on", !!coach);
   $("gps").textContent = st.gpsAccuracy === null ? "GPS –" : `GPS ±${st.gpsAccuracy.toFixed(0)} m`;
   $("gps").dataset.q = st.gpsAccuracy === null ? "none" : st.gpsAccuracy <= 8 ? "good" : "limited";
   if (!$("sheet").hidden) {
@@ -184,9 +209,16 @@ function hud(t: number) {
     const g = engine.geoOf(sel);
     $("debug").textContent = [
       `tracker   ${provider.name}`,
+      ...(provider instanceof VioTrackingProvider
+        ? [
+            `vio       ${provider.status} · ${provider.info.fps.toFixed(0)} Hz · ${provider.info.ms.toFixed(0)} ms · ${provider.info.points} pts · ${provider.info.resets} resets`,
+            `          ${provider.info.frame} · ${provider.info.threads} thread(s) · ${provider.info.gpu ? "GPU points" : "CPU points"} · sync ${provider.info.timeOffsetMs} ms`,
+            `          ${st.dof}DoF · floor ${provider.info.floor ? "found" : "assumed from phone height"}`,
+          ]
+        : []),
       `render    ${engine.fps.toFixed(0)} fps · fov ${engine.camera.fov.toFixed(1)}° vertical`,
       `heading   ${st.heading.toFixed(1)}°  ±${st.headingAccuracy?.toFixed(0) ?? "?"}°`,
-      `position  E ${st.position.x.toFixed(2)}  N ${(-st.position.z).toFixed(2)} m · ${st.steps} steps`,
+      `position  E ${st.position.x.toFixed(2)}  N ${(-st.position.z).toFixed(2)}  up ${st.position.y.toFixed(2)} m`,
       `sun       az ${engine.sun.azimuth.toFixed(0)}° alt ${engine.sun.altitude.toFixed(0)}°${engine.sun.real ? "" : " (default, sun is down)"}`,
       `anchor    ${g ? `${g.lat.toFixed(7)}, ${g.lon.toFixed(7)}` : "no GPS fix yet"}`,
     ].join("\n");
@@ -247,7 +279,7 @@ $("move").addEventListener("click", () => {
     const st = provider.state;
     const a = engine.anchors[selected];
     const yaw = (Math.atan2(p.x - st.position.x, -(p.z - st.position.z)) * 180) / Math.PI;
-    a.place(p.x, -p.z, yaw);
+    a.place(p.x, -p.z, yaw, p.y);
     placing = false;
     engine.reticle.visible = false;
     persist();
@@ -295,6 +327,18 @@ document.querySelectorAll<HTMLElement>("#walk button").forEach((b) => {
     document.querySelectorAll("#walk button").forEach((x) => x.classList.toggle("sel", x === b));
   });
 });
+
+for (const key of ["vio", "sharp", "points"] as const) {
+  const b = $(`t-${key}`);
+  b.classList.toggle("sel", prefs[key]);
+  b.addEventListener("click", () => {
+    prefs[key] = !prefs[key];
+    save(PREFS, prefs);
+    b.classList.toggle("sel", prefs[key]);
+    if (key === "points") engine && (engine.showLandmarks = prefs.points);
+    else location.reload();
+  });
+}
 
 if (!window.isSecureContext) $("warn").hidden = false;
 if (location.hash.startsWith("#preview")) begin(true);

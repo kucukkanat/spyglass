@@ -33,6 +33,15 @@ export interface TrackingProvider {
   stop(): void;
   /** Advance filters; called once per rendered frame. */
   update(dt: number): void;
+  /** Sparse map points in the local frame, when the tracker builds one. */
+  readonly landmarks?: { positions: Float32Array; count: number; version: number } | null;
+  /** Nearest mapped surface along a ray (local frame), or null. */
+  surfacePoint?(origin: Vector3, dir: Vector3): { point: Vector3; depth: number } | null;
+  /** Short status for the HUD. */
+  readonly statusText?: string;
+  /** Instruction to show the player while tracking is not established. */
+  readonly coach?: string | null;
+  recenter?(): void;
 }
 
 export interface ProviderConfig {

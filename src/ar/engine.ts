@@ -26,8 +26,8 @@ export class Anchor {
     this.group.add(shadow, object.root);
     this.group.visible = false;
   }
-  place(e: number, n: number, yawDeg: number) {
-    this.group.position.set(e, 0, -n);
+  place(e: number, n: number, yawDeg: number, y = 0) {
+    this.group.position.set(e, y, -n);
     this.group.rotation.y = -THREE.MathUtils.degToRad(yawDeg);
     this.group.visible = true;
     this.born = -1;
@@ -81,6 +81,9 @@ export class AREngine {
   private lastSun = -1e9;
   private ray = new THREE.Ray();
   private centroid = new THREE.Vector3();
+  private cloud: THREE.Points;
+  private cloudVersion = -1;
+  showLandmarks = true;
 
   constructor(opts: EngineOptions) {
     this.provider = opts.provider;
@@ -131,6 +134,13 @@ export class AREngine {
     this.reticle.renderOrder = 10;
     this.scene.add(this.reticle);
 
+    const cg = new THREE.BufferGeometry();
+    cg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3 * 4000), 3));
+    cg.setDrawRange(0, 0);
+    this.cloud = new THREE.Points(cg, new THREE.PointsMaterial({ color: 0x7fe9ff, size: 5, sizeAttenuation: false, transparent: true, opacity: 0.7, depthTest: false }));
+    this.cloud.frustumCulled = false;
+    this.scene.add(this.cloud);
+
     this.probe.width = this.probe.height = 16;
     this.probeCtx = this.probe.getContext("2d", { willReadFrequently: true });
 
@@ -152,6 +162,9 @@ export class AREngine {
     this.ray.direction.set(0, 0, -1).applyQuaternion(cam.quaternion);
     const d = this.ray.direction;
     let t = d.y < -0.05 ? -cam.position.y / d.y : Infinity;
+    // Prefer a real surface the tracker has mapped (table top, wall, kerb) when it is nearer than the floor.
+    const hit = this.provider.surfacePoint?.(this.ray.origin, d);
+    if (hit && hit.depth < t - 0.25) return hit.point;
     if (!isFinite(t) || t > 40) {
       const h = Math.hypot(d.x, d.z) || 1;
       return new THREE.Vector3(cam.position.x + (d.x / h) * fallbackDist, 0, cam.position.z + (d.z / h) * fallbackDist);
@@ -163,11 +176,11 @@ export class AREngine {
     const o = this.provider.state.geoOrigin;
     return o ? toLatLon(o, a.en) : null;
   }
-  placeGeo(a: Anchor, p: LatLon, yaw: number) {
+  placeGeo(a: Anchor, p: LatLon, yaw: number, y = 0) {
     const o = this.provider.state.geoOrigin;
     if (!o) return false;
     const en = toEN(o, p);
-    a.place(en.e, en.n, yaw);
+    a.place(en.e, en.n, yaw, y);
     return true;
   }
 
@@ -250,6 +263,16 @@ export class AREngine {
       this.camera.position.copy(st.position);
       this.camera.quaternion.copy(st.quaternion);
       this.updateLighting(performance.now());
+      const lm = this.provider.landmarks;
+      this.cloud.visible = this.showLandmarks && !!lm;
+      if (lm && lm.version !== this.cloudVersion) {
+        this.cloudVersion = lm.version;
+        const attr = this.cloud.geometry.attributes.position as THREE.BufferAttribute;
+        const n = Math.min(lm.count, 4000);
+        (attr.array as Float32Array).set(lm.positions.subarray(0, 3 * n));
+        attr.needsUpdate = true;
+        this.cloud.geometry.setDrawRange(0, n);
+      }
       for (const a of this.anchors) {
         a.tick(t, dt);
         const dx = a.group.position.x - st.position.x, dz = a.group.position.z - st.position.z;
@@ -257,7 +280,8 @@ export class AREngine {
         a.bearing = wrap180(THREE.MathUtils.radToDeg(Math.atan2(dx, -dz)) - st.heading);
       }
       if (this.reticle.visible) {
-        this.reticle.position.copy(this.groundPoint()).setY(0.02);
+        const gp = this.groundPoint();
+        this.reticle.position.copy(gp).setY(gp.y + 0.02);
         this.reticle.scale.setScalar(1 + 0.08 * Math.sin(t * 5));
       }
       this.onFrame?.(t);

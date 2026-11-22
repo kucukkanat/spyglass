@@ -7,6 +7,18 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#07121c">
 <title>Spyglass AR</title>
+<script>
+// Wasm threads need a cross-origin isolated page; static hosts cannot send the headers,
+// so a service worker adds them from the next load on (one reload at most per tab session).
+if (!self.crossOriginIsolated && window.isSecureContext && navigator.serviceWorker) {
+  navigator.serviceWorker.register("coi-sw.js").then(() => navigator.serviceWorker.ready).then(() => {
+    if (!sessionStorage.getItem("coi-reloaded")) {
+      sessionStorage.setItem("coi-reloaded", "1");
+      location.reload();
+    }
+  }, (err) => console.warn("cross-origin isolation service worker:", err));
+}
+</script>
 <style>
 :root{--ink:#07121c;--panel:rgba(9,22,34,.62);--line:rgba(244,231,197,.22);--parch:#f4e7c5;--gold:#ffd36b;--teal:#7fe9ff;--red:#ff6b57;
   --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;--sans:ui-sans-serif,-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;
@@ -71,6 +83,12 @@ h1 span{color:var(--gold)}
 #toast{position:absolute;left:50%;top:calc(126px + var(--st));transform:translate(-50%,-8px);max-width:min(88vw,360px);padding:10px 16px;border-radius:14px;font-size:13.5px;line-height:1.4;text-align:center;
   opacity:0;transition:opacity .3s,transform .3s;pointer-events:none!important}
 #toast.on{opacity:1;transform:translate(-50%,0)}
+#coach{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%) scale(.96);width:min(80vw,320px);padding:18px 20px;border-radius:18px;text-align:center;
+  font-family:var(--serif);font-size:19px;line-height:1.35;text-wrap:balance;opacity:0;transition:opacity .35s,transform .35s;pointer-events:none!important}
+#coach.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.tog{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+.tog button{padding:10px 4px;font-size:12.5px;border-radius:12px;border:1px solid var(--line);color:rgba(244,231,197,.6)}
+.tog button.sel{border-color:var(--gold);color:var(--gold);background:rgba(60,42,8,.5)}
 
 /* sheet */
 #sheet{position:fixed;left:0;right:0;bottom:0;z-index:30;border-radius:22px 22px 0 0;padding:16px 18px calc(18px + var(--sb));max-height:82vh;overflow:auto;touch-action:pan-y;background:rgba(7,18,28,.9)}
@@ -106,7 +124,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
     <circle cx="50" cy="50" r="3.5" fill="#07121c"/>
   </svg>
   <h1>Spy<span>glass</span></h1>
-  <p class="lede">Three treasures, anchored to the ground around you. Raise your phone and find them.</p>
+  <p class="lede">Three treasures, pinned to the world around you. Raise your phone and find them.</p>
   <div class="needs"><span>Camera</span><span>Motion &amp; compass</span><span>Location</span></div>
   <p id="warn" hidden>This page is not on HTTPS, so the camera and sensors are blocked. Host it on an https:// address.</p>
   <button class="cta" id="go">Raise the spyglass</button>
@@ -124,6 +142,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   </div>
   <button id="gear" class="glass" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
   <div id="toast" class="glass"></div>
+  <div id="coach" class="glass"></div>
   <div class="bottom">
     <div id="cards"></div>
     <div class="actions">
@@ -135,6 +154,9 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
 
 <div id="sheet" class="glass" hidden>
   <div class="head"><h2>Calibration</h2><button id="close">Done</button></div>
+  <label>Tracking</label>
+  <div class="tog"><button id="t-vio">Visual 6DoF</button><button id="t-sharp">Sharp camera</button><button id="t-points">Map points</button></div>
+  <p class="hint">Visual 6DoF tracks the camera image so objects stay pinned as you walk. Sharp camera looks better but may track worse. The first two reload the page.</p>
   <label>Camera field of view <output id="fov-v"></output></label>
   <input type="range" id="fov" min="48" max="80" step="0.5">
   <p class="hint">If objects slide against the background when you pan, adjust this until they stick.</p>

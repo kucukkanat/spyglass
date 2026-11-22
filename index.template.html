@@ -159,11 +159,12 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
   <p class="hint">Visual 6DoF tracks the camera image so objects stay pinned as you walk. Sharp camera looks better but may track worse. The first two reload the page.</p>
   <label>Camera field of view <output id="fov-v"></output></label>
   <input type="range" id="fov" min="48" max="80" step="0.5">
-  <p class="hint">If objects slide against the background when you pan, adjust this until they stick.</p>
+  <p class="hint">If objects slide against the background when you pan, adjust this until they stick. With visual tracking on, this also recalibrates the tracker (it restarts) and is saved for this phone.</p>
   <label>Compass trim <output id="trim-v"></output></label>
   <input type="range" id="trim" min="-30" max="30" step="0.5">
-  <label>Phone height above ground <output id="eye-v"></output></label>
+  <label>Phone height above floor <output id="eye-v"></output></label>
   <input type="range" id="eye" min="1" max="1.9" step="0.05">
+  <p class="hint">Set this to how high you hold the phone. Visual tracking uses it to check its sense of scale, so it drives how big objects look.</p>
   <label>Walking</label>
   <div class="seg" id="walk">
     <button data-v="steps+gps">Steps + GPS</button><button data-v="gps">GPS only</button><button data-v="locked">Stand still</button>

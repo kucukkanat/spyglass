@@ -135,9 +135,9 @@ export class AREngine {
     this.scene.add(this.reticle);
 
     const cg = new THREE.BufferGeometry();
-    cg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3 * 4000), 3));
+    cg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3 * 20000), 3));
     cg.setDrawRange(0, 0);
-    this.cloud = new THREE.Points(cg, new THREE.PointsMaterial({ color: 0x7fe9ff, size: 5, sizeAttenuation: false, transparent: true, opacity: 0.7, depthTest: false }));
+    this.cloud = new THREE.Points(cg, new THREE.PointsMaterial({ color: 0x7fe9ff, size: 4, sizeAttenuation: false, transparent: true, opacity: 0.7, depthTest: false }));
     this.cloud.frustumCulled = false;
     this.scene.add(this.cloud);
 
@@ -268,7 +268,7 @@ export class AREngine {
       if (lm && lm.version !== this.cloudVersion) {
         this.cloudVersion = lm.version;
         const attr = this.cloud.geometry.attributes.position as THREE.BufferAttribute;
-        const n = Math.min(lm.count, 4000);
+        const n = Math.min(lm.count, 20000);
         (attr.array as Float32Array).set(lm.positions.subarray(0, 3 * n));
         attr.needsUpdate = true;
         this.cloud.geometry.setDrawRange(0, n);

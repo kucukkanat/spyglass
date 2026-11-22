@@ -116,7 +116,7 @@ async function begin(forceDemo: boolean) {
   else {
     if (!(provider instanceof VioTrackingProvider)) toast("Hold the phone upright and look around slowly while the compass settles…", 4000);
     const wait = setInterval(() => {
-      const ready = provider instanceof VioTrackingProvider ? provider.state.dof === 6 : provider.state.quality !== "none";
+      const ready = provider instanceof VioTrackingProvider ? provider.settled && provider.state.dof === 6 : provider.state.quality !== "none";
       if (ready && !placedOnce) {
         clearInterval(wait);
         setTimeout(() => {
@@ -213,7 +213,8 @@ function hud(t: number) {
         ? [
             `vio       ${provider.status} · ${provider.info.fps.toFixed(0)} Hz · ${provider.info.ms.toFixed(0)} ms · ${provider.info.points} pts · ${provider.info.resets} resets`,
             `          ${provider.info.frame} · ${provider.info.threads} thread(s) · ${provider.info.gpu ? "GPU points" : "CPU points"} · sync ${provider.info.timeOffsetMs} ms`,
-            `          ${st.dof}DoF · floor ${provider.info.floor ? "found" : "assumed from phone height"}`,
+            `          ${st.dof}DoF · floor ${provider.info.floor ? "found" : "assumed from phone height"} · scale x${provider.info.scale.toFixed(2)}`,
+            `map       ${provider.info.mapPoints} points · surfaces at ${provider.info.layers || "none yet"} m`,
           ]
         : []),
       `render    ${engine.fps.toFixed(0)} fps · fov ${engine.camera.fov.toFixed(1)}° vertical`,
@@ -316,7 +317,17 @@ function slider(id: string, key: "fov" | "trim" | "eye", unit: string, apply: (v
   el.addEventListener("input", on);
   out.textContent = `${prefs[key]}${unit}`;
 }
-slider("fov", "fov", "°", (v) => { engine.cameraFov = v; engine.resize(); });
+let fovTimer = 0;
+slider("fov", "fov", "°", (v) => {
+  engine.cameraFov = v;
+  engine.resize();
+  if (provider instanceof VioTrackingProvider) {
+    // The tracker needs the same lens model: restart it once the slider rests.
+    clearTimeout(fovTimer);
+    const vio = provider;
+    fovTimer = setTimeout(() => vio.setFov(v), 700) as unknown as number;
+  }
+});
 slider("trim", "trim", "°", (v) => (cfg.headingTrim = v));
 slider("eye", "eye", " m", (v) => (cfg.eyeHeight = v));
 document.querySelectorAll<HTMLElement>("#walk button").forEach((b) => {

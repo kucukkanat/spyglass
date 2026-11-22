@@ -116,7 +116,11 @@ export class VioTrackingProvider implements TrackingProvider {
   readonly state: TrackingState;
   landmarks: { positions: Float32Array; count: number; version: number } | null = null;
   status = "loading";
-  info = { threads: 0, gpu: null as string | null, fps: 0, ms: 0, points: 0, resets: 0, timeOffsetMs: 0, floor: false, frame: "" };
+  info = { threads: 0, gpu: null as string | null, fps: 0, ms: 0, points: 0, resets: 0, timeOffsetMs: 0, floor: false, frame: "", scale: 1, mapPoints: 0, layers: "" };
+  /** True once scale and floor have had a chance to settle; objects should not be placed before. */
+  settled = false;
+  /** Heights (local y) of horizontal surfaces found in the map: floor first, then table tops etc. */
+  layers: number[] = [];
   /** Long-side field of view of the camera stream implied by the calibration, degrees. */
   cameraFov = 67;
 
@@ -159,6 +163,18 @@ export class VioTrackingProvider implements TrackingProvider {
   private offset = new Vector3();
   private aligned = false;
   private wasPosed = false;
+  static MAP_MAX = 20000;
+  // World scale correction (monocular scale comes from the IMU alone and can be off).
+  private scale = 1;
+  private scaleFixes = 0;
+  private pvRaw = new Vector3();
+  private path = 0;
+  private lastPathPos: Vector3 | null = null;
+  private trackedSince = 0;
+  // Persistent map in the tracker's own world (unscaled), one point per 5 cm voxel.
+  private mapRaw = new Float32Array(3 * VioTrackingProvider.MAP_MAX);
+  private mapCount = 0;
+  private mapKeys = new Set<number>();
   private fallbackYaw = 0; // degrees added to the compass heading while not tracking
   private everTracked = false;
   private qYaw = new Quaternion();
@@ -178,7 +194,19 @@ export class VioTrackingProvider implements TrackingProvider {
   }
 
   private saveCalib() {
-    try { localStorage.setItem(`spyglass.vio.calib:${this.device.key}`, JSON.stringify({ timeOffsetMs: this.calib.timeOffsetMs, gyroAxes: this.calib.gyroAxes })); } catch {}
+    try {
+      const c = this.calib;
+      const focal = c.focal35 !== this.device.focal35 ? { focal35: c.focal35 } : {};
+      localStorage.setItem(`spyglass.vio.calib:${this.device.key}`, JSON.stringify({ timeOffsetMs: c.timeOffsetMs, gyroAxes: c.gyroAxes, ...focal }));
+    } catch {}
+  }
+
+  /** Recalibrates the lens from a long-side field of view (degrees) and restarts tracking with it. */
+  setFov(fov: number) {
+    this.cameraFov = fov;
+    this.calib.focal35 = (43.27 * 0.5) / (1.25 * Math.tan((fov * DEG) / 2));
+    this.saveCalib();
+    if (this.ready && !this.fatal) this.beginSession();
   }
 
   get statusText() {
@@ -199,6 +227,7 @@ export class VioTrackingProvider implements TrackingProvider {
     if (s === "init") return "Now move the phone slowly side to side";
     if (s.startsWith("reset")) return "Lost tracking. Hold still to recover";
     if (s === "coast") return "Too fast or too plain. Point at something with detail";
+    if (s === "track" && !this.settled) return "Keep moving side to side, and look at the floor";
     return null;
   }
 
@@ -345,6 +374,10 @@ export class VioTrackingProvider implements TrackingProvider {
     this.imuBatch = [...recent.flatMap((s) => [Math.round(s.t * 1e6), ...s.g, ...s.a]), ...this.imuBatch];
     this.flushImu();
     this.latest = null;
+    // A new session is a new tracker world: the old map no longer lines up.
+    this.mapCount = 0;
+    this.mapKeys.clear();
+    if (this.landmarks) (this.landmarks.count = 0), this.landmarks.version++;
     this.status = "wait";
     this.inflight = 0;
     if (!this.running) {
@@ -491,7 +524,8 @@ export class VioTrackingProvider implements TrackingProvider {
       const { q, p } = this.predicted(now + 16.7 - this.videoLatencyMs + this.calib.timeOffsetMs);
       // VIO world (z up, OpenCV camera) -> y-up scene, three.js camera.
       this.qv.set(q[1], q[2], q[3], q[0]).premultiply(VioTrackingProvider.Q_CONV).multiply(VioTrackingProvider.Q_FLIP);
-      this.pv.set(p[0], p[2], -p[1]);
+      this.pvRaw.set(p[0], p[2], -p[1]);
+      this.pv.copy(this.pvRaw).multiplyScalar(this.scale);
       if (!this.wasPosed) {
         // (Re)anchor the tracker's world so the camera continues exactly where the view was.
         const wantHeading = this.everTracked ? st.heading : c.state.heading;
@@ -501,6 +535,15 @@ export class VioTrackingProvider implements TrackingProvider {
         if (!this.everTracked) st.position.set(0, this.cfg.eyeHeight, 0);
         this.offset.copy(st.position).sub(rp);
         this.aligned = this.wasPosed = this.everTracked = true;
+        this.trackedSince = now;
+        this.lastPathPos = null;
+      }
+      if (!this.settled) {
+        if (this.lastPathPos) this.path += this.lastPathPos.distanceTo(this.pv);
+        (this.lastPathPos ??= new Vector3()).copy(this.pv);
+        const secs = (now - this.trackedSince) / 1000;
+        // Enough sideways travel for the IMU to fix scale, then the floor (or a timeout where it has no texture).
+        if (m.status === "track" && this.path > 0.5 && secs > 1.5 && (this.info.floor || secs > 6)) this.settled = true;
       }
       st.quaternion.copy(this.qYaw).multiply(this.qv);
       st.position.copy(this.pv).applyQuaternion(this.qYaw).add(this.offset);
@@ -525,56 +568,94 @@ export class VioTrackingProvider implements TrackingProvider {
   // ---- environment ---------------------------------------------------------------------
 
   private onLandmarks(raw: Float32Array) {
-    const n = Math.min(raw.length / 3, 4000);
-    const lm = (this.landmarks ??= { positions: new Float32Array(3 * 4000), count: 0, version: 0 });
-    const out = lm.positions;
-    const cs = Math.cos(this.yaw), sn = Math.sin(this.yaw);
-    const o = this.offset;
-    for (let i = 0; i < n; i++) {
+    // Accumulate into the persistent map (tracker world, unscaled, y-up).
+    const n = raw.length / 3, VOX = 0.05;
+    for (let i = 0; i < n && this.mapCount < VioTrackingProvider.MAP_MAX; i++) {
       const x = raw[3 * i], y = raw[3 * i + 2], z = -raw[3 * i + 1];
-      out[3 * i] = cs * x + sn * z + o.x;
-      out[3 * i + 1] = y + o.y;
-      out[3 * i + 2] = -sn * x + cs * z + o.z;
+      const ix = Math.round(x / VOX) + 512, iy = Math.round(y / VOX) + 512, iz = Math.round(z / VOX) + 512;
+      if (ix < 0 || ix > 1023 || iy < 0 || iy > 1023 || iz < 0 || iz > 1023) continue;
+      const key = ix * 1048576 + iy * 1024 + iz;
+      if (this.mapKeys.has(key)) continue;
+      this.mapKeys.add(key);
+      this.mapRaw.set([x, y, z], 3 * this.mapCount++);
     }
-    lm.count = n;
-    lm.version++;
-    this.fitFloor(out, n);
+    this.fitSurfaces();
+    this.projectMap();
   }
 
-  /** Finds the dominant horizontal layer of points below the camera and moves it to y = 0. */
-  private fitFloor(pts: Float32Array, n: number) {
-    const cam = this.state.position;
-    const BIN = 0.08, bins = new Map<number, number[]>();
-    let below = 0;
-    for (let i = 0; i < n; i++) {
-      const y = pts[3 * i + 1];
-      if (y > cam.y - 0.5 || y < cam.y - 3) continue;
-      if (Math.hypot(pts[3 * i] - cam.x, pts[3 * i + 2] - cam.z) > 6) continue;
-      below++;
+  /** Map points in the local frame, for rendering and hit tests. */
+  private projectMap() {
+    const lm = (this.landmarks ??= { positions: new Float32Array(3 * VioTrackingProvider.MAP_MAX), count: 0, version: 0 });
+    const out = lm.positions, src = this.mapRaw, s = this.scale, o = this.offset;
+    const cs = Math.cos(this.yaw) * s, sn = Math.sin(this.yaw) * s;
+    for (let i = 0; i < this.mapCount; i++) {
+      const x = src[3 * i], y = src[3 * i + 1], z = src[3 * i + 2];
+      out[3 * i] = cs * x + sn * z + o.x;
+      out[3 * i + 1] = s * y + o.y;
+      out[3 * i + 2] = -sn * x + cs * z + o.z;
+    }
+    lm.count = this.mapCount;
+    lm.version++;
+    this.info.mapPoints = this.mapCount;
+  }
+
+  /**
+   * Finds horizontal surfaces as dense height layers in the map near the player. The lowest
+   * strong layer at a plausible depth below the phone is the floor: it is moved to y = 0 and,
+   * if the phone's height above it disagrees with the configured one, the world is rescaled.
+   */
+  private fitSurfaces() {
+    const cam = this.state.position, s = this.scale, o = this.offset, src = this.mapRaw;
+    const cs = Math.cos(this.yaw) * s, sn = Math.sin(this.yaw) * s;
+    const BIN = 0.04, hist = new Map<number, number>();
+    for (let i = 0; i < this.mapCount; i++) {
+      const x = cs * src[3 * i] + sn * src[3 * i + 2] + o.x, z = -sn * src[3 * i] + cs * src[3 * i + 2] + o.z;
+      if (Math.hypot(x - cam.x, z - cam.z) > 6) continue;
+      const y = s * src[3 * i + 1] + o.y;
+      if (y > cam.y + 0.3 || y < cam.y - 3) continue;
       const k = Math.round(y / BIN);
-      (bins.get(k) ?? bins.set(k, []).get(k)!).push(y);
+      hist.set(k, (hist.get(k) ?? 0) + 1);
     }
-    let best: number[] = [];
-    for (const [k, ys] of bins) {
-      const win = [...ys, ...(bins.get(k + 1) ?? [])];
-      if (win.length > best.length) best = win;
+    // Peaks of a 3-bin window, strongest first, at least 20 cm apart.
+    const peaks: { y: number; n: number }[] = [];
+    for (const [k, c] of hist) {
+      const l = hist.get(k - 1) ?? 0, r = hist.get(k + 1) ?? 0, nSum = c + l + r;
+      if (nSum < 18 || c < l || c < r) continue;
+      peaks.push({ y: ((k - 1) * l + k * c + (k + 1) * r) / nSum * BIN, n: nSum });
     }
-    if (best.length < 15 || best.length < 0.25 * below) return;
-    const floorY = best.reduce((a, b) => a + b, 0) / best.length;
-    const camHeight = cam.y - floorY;
-    if (camHeight < 0.7 || camHeight > 2.2) return; // a table top or a balcony view, not the floor under the player
-    this.info.floor = true;
-    if (Math.abs(floorY) < 0.02) return;
-    const step = -floorY * 0.25;
-    this.offset.y += step;
-    for (let i = 0; i < n; i++) pts[3 * i + 1] += step;
+    peaks.sort((a, b) => b.n - a.n);
+    const kept: { y: number; n: number }[] = [];
+    for (const p of peaks) if (kept.every((q) => Math.abs(q.y - p.y) > 0.2)) kept.push(p);
+    const floor = kept.filter((p) => cam.y - p.y > 0.9 && cam.y - p.y < 2.1).sort((a, b) => a.y - b.y)[0];
+    if (floor) {
+      this.info.floor = true;
+      const camHeight = cam.y - floor.y;
+      const r = this.cfg.eyeHeight / camHeight;
+      if (Math.abs(r - 1) > 0.12 && r > 0.7 && r < 1.4 && this.scaleFixes < 2 && floor.n >= 30) {
+        // Rescale the world about the camera so the view does not jump.
+        const sNew = this.scale * r;
+        this.qYaw.setFromAxisAngle(VioTrackingProvider.UP, this.yaw);
+        this.offset.add(this.pvRaw.clone().applyQuaternion(this.qYaw).multiplyScalar(this.scale - sNew));
+        this.scale = sNew;
+        this.info.scale = sNew;
+        this.scaleFixes++;
+        return; // layers are re-fitted on the next map update, at the new scale
+      }
+      if (Math.abs(floor.y) > 0.015) {
+        const step = -floor.y * 0.3;
+        this.offset.y += step;
+        for (const p of kept) p.y += step;
+      }
+    }
+    this.layers = [...(floor ? [floor] : []), ...kept.filter((p) => p !== floor && (!floor || p.y > floor.y + 0.25))].map((p) => p.y);
+    this.info.layers = this.layers.map((y) => y.toFixed(2)).join(" / ");
   }
 
   surfacePoint(origin: Vector3, dir: Vector3) {
     const lm = this.landmarks;
     if (!lm || this.state.dof !== 6) return null;
     const p = lm.positions, depths: number[] = [];
-    const tan = Math.tan(3.5 * DEG);
+    const tan = Math.tan(3 * DEG);
     for (let i = 0; i < lm.count; i++) {
       const vx = p[3 * i] - origin.x, vy = p[3 * i + 1] - origin.y, vz = p[3 * i + 2] - origin.z;
       const d = vx * dir.x + vy * dir.y + vz * dir.z;
@@ -584,8 +665,24 @@ export class VioTrackingProvider implements TrackingProvider {
     }
     if (depths.length < 4) return null;
     depths.sort((a, b) => a - b);
-    const depth = depths[depths.length >> 1];
-    return { point: origin.clone().addScaledVector(dir, depth), depth };
+    // The nearest tight cluster along the ray is the surface in front; points behind it are ignored.
+    let depth = -1;
+    for (let i = 0; i + 3 < depths.length; i++) {
+      if (depths[i + 3] - depths[i] > 0.25) continue;
+      let j = i, sum = 0;
+      while (j < depths.length && depths[j] - depths[i] < 0.25) sum += depths[j++];
+      depth = sum / (j - i);
+      break;
+    }
+    if (depth < 0) return null;
+    const point = origin.clone().addScaledVector(dir, depth);
+    // Snap onto a detected horizontal surface when the hit is on one: slide along the ray to its height.
+    const layer = this.layers.find((y) => Math.abs(y - point.y) < 0.1);
+    if (layer !== undefined && Math.abs(dir.y) > 0.08) {
+      depth = (layer - origin.y) / dir.y;
+      point.copy(origin).addScaledVector(dir, depth);
+    }
+    return { point, depth };
   }
 
   recenter() {}

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07121c">
+<title>Spyglass AR</title>
+<style>
+:root{--ink:#07121c;--panel:rgba(9,22,34,.62);--line:rgba(244,231,197,.22);--parch:#f4e7c5;--gold:#ffd36b;--teal:#7fe9ff;--red:#ff6b57;
+  --serif:ui-serif,"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;--sans:ui-sans-serif,-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--ink);color:var(--parch);font-family:var(--sans);-webkit-user-select:none;user-select:none;touch-action:none}
+#video,#gl,#sky{position:fixed;inset:0;width:100%;height:100%}
+#video{object-fit:cover}
+#sky{display:none;background:linear-gradient(#141d3a 0%,#3a3f6e 28%,#c9787a 46%,#f3b27a 51.5%,#2c4a5c 52%,#16303f 70%,#0c1e2a 100%)}
+body.demo #sky{display:block}body.demo #video{display:none}
+#gl{touch-action:none}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+.glass{background:var(--panel);border:1px solid var(--line);-webkit-backdrop-filter:blur(14px) saturate(1.3);backdrop-filter:blur(14px) saturate(1.3)}
+
+/* start */
+#start{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:calc(28px + var(--st)) 28px calc(28px + var(--sb));text-align:center;
+  background:radial-gradient(120% 80% at 50% 0%,#1d3a52 0%,#0a1826 55%,#050c13 100%);transition:opacity .6s,visibility .6s}
+#start.gone{opacity:0;visibility:hidden}
+.rose{width:132px;height:132px;animation:spin 40s linear infinite;filter:drop-shadow(0 0 22px rgba(255,211,107,.35))}
+@keyframes spin{to{transform:rotate(360deg)}}
+h1{font-family:var(--serif);font-weight:600;font-size:clamp(34px,10vw,46px);letter-spacing:.04em;margin:6px 0 0;text-wrap:balance}
+h1 span{color:var(--gold)}
+.lede{max-width:30ch;line-height:1.5;color:rgba(244,231,197,.78);margin:0;font-size:16px;text-wrap:pretty}
+.cta{margin-top:10px;padding:16px 34px;border-radius:999px;font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:.03em;color:#201400;
+  background:linear-gradient(180deg,#ffe29a,#f0b03c);box-shadow:0 10px 30px rgba(240,176,60,.35),inset 0 1px 0 rgba(255,255,255,.6)}
+.cta:active{transform:translateY(1px) scale(.99)}
+.ghost{font-size:14px;color:rgba(244,231,197,.6);text-decoration:underline;text-underline-offset:3px;padding:10px}
+.needs{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;font-size:12px;color:rgba(244,231,197,.7)}
+.needs span{padding:5px 10px;border-radius:999px;border:1px solid var(--line)}
+#warn{color:var(--red);font-size:13px;max-width:32ch}
+
+/* hud */
+#hud{position:fixed;inset:0;z-index:10;pointer-events:none;opacity:0;transition:opacity .6s .2s}
+#hud.on{opacity:1}
+#hud>*{pointer-events:auto}
+.top{position:absolute;top:0;left:0;right:0;padding:calc(8px + var(--st)) 12px 22px;pointer-events:none!important;
+  background:linear-gradient(rgba(5,12,19,.72),rgba(5,12,19,0))}
+#compass{display:block;width:100%;height:46px}
+.row{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
+#hdg{font-family:var(--serif);font-size:20px;font-weight:600;min-width:3.2em;text-align:center;font-variant-numeric:tabular-nums}
+.chip{font-size:11.5px;padding:4px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#8b97a3}
+.chip[data-q=good]::before{background:#5dff8a;box-shadow:0 0 8px #5dff8a}
+.chip[data-q=limited]::before{background:var(--gold)}
+#gear{position:absolute;top:calc(74px + var(--st));right:12px;width:42px;height:42px;border-radius:50%;display:grid;place-items:center}
+#gear svg{width:21px;height:21px;fill:none;stroke:var(--parch);stroke-width:1.7}
+.bottom{position:absolute;left:0;right:0;bottom:0;padding:26px 12px calc(12px + var(--sb));display:flex;flex-direction:column;gap:10px;pointer-events:none!important;
+  background:linear-gradient(rgba(5,12,19,0),rgba(5,12,19,.78))}
+.bottom>*{pointer-events:auto}
+#cards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.card{border-radius:16px;padding:10px 8px 9px;display:flex;flex-direction:column;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);transition:border-color .2s,background .2s,transform .2s}
+.card.sel{border-color:var(--gold);background:rgba(60,42,8,.6);transform:translateY(-3px)}
+.ico{width:26px;height:26px;fill:none;stroke:var(--teal);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.card.sel .ico{stroke:var(--gold)}
+.nm{font-family:var(--serif);font-size:12.5px;line-height:1.15;text-align:center;min-height:2.3em;display:flex;align-items:center}
+.meta{display:flex;align-items:center;gap:5px;font-size:13px;font-variant-numeric:tabular-nums}
+.arrow{width:14px;height:14px;fill:var(--parch);transition:transform .12s linear}
+.actions{display:flex;gap:8px}
+#move{flex:1;padding:14px;border-radius:14px;font-family:var(--serif);font-size:16px;font-weight:600;color:#201400;background:linear-gradient(180deg,#ffe29a,#f0b03c)}
+#cancel{padding:14px 18px;border-radius:14px}
+#toast{position:absolute;left:50%;top:calc(126px + var(--st));transform:translate(-50%,-8px);max-width:min(88vw,360px);padding:10px 16px;border-radius:14px;font-size:13.5px;line-height:1.4;text-align:center;
+  opacity:0;transition:opacity .3s,transform .3s;pointer-events:none!important}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+/* sheet */
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:30;border-radius:22px 22px 0 0;padding:16px 18px calc(18px + var(--sb));max-height:82vh;overflow:auto;touch-action:pan-y;background:rgba(7,18,28,.9)}
+#sheet[hidden]{display:none}
+#sheet h2{font-family:var(--serif);font-size:20px;margin:0;font-weight:600}
+.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+#close{font-size:14px;color:var(--gold);padding:8px}
+label{display:flex;justify-content:space-between;font-size:13.5px;margin:14px 0 4px}
+label output{color:var(--gold);font-variant-numeric:tabular-nums}
+.hint{font-size:11.5px;color:rgba(244,231,197,.55);margin:2px 0 0;line-height:1.4}
+input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.seg button{padding:10px 4px;font-size:12.5px}
+.seg button.sel{background:var(--gold);color:#201400;font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.two button{padding:12px;border-radius:12px;border:1px solid var(--line);font-size:13.5px}
+#debug{margin:14px 0 0;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.35);font:11px/1.55 ui-monospace,Menlo,monospace;color:rgba(244,231,197,.8);white-space:pre-wrap;overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.rose{animation:none}}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay></video>
+<div id="sky"></div>
+<canvas id="gl"></canvas>
+
+<div id="start">
+  <svg class="rose" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="50" cy="50" r="46" fill="none" stroke="#f4e7c5" stroke-opacity=".35"/>
+    <circle cx="50" cy="50" r="38" fill="none" stroke="#f4e7c5" stroke-opacity=".18" stroke-dasharray="1 4"/>
+    <path d="M50 4 56 44 96 50 56 56 50 96 44 56 4 50 44 44Z" fill="#ffd36b"/>
+    <path d="M50 4 50 50 56 44ZM96 50 50 50 56 56ZM50 96 50 50 44 56ZM4 50 50 50 44 44Z" fill="#b97a14"/>
+    <path d="M50 50 72 28 58 50 72 72 50 58 28 72 42 50 28 28Z" fill="#7fe9ff" fill-opacity=".55"/>
+    <circle cx="50" cy="50" r="3.5" fill="#07121c"/>
+  </svg>
+  <h1>Spy<span>glass</span></h1>
+  <p class="lede">Three treasures, anchored to the ground around you. Raise your phone and find them.</p>
+  <div class="needs"><span>Camera</span><span>Motion &amp; compass</span><span>Location</span></div>
+  <p id="warn" hidden>This page is not on HTTPS, so the camera and sensors are blocked. Host it on an https:// address.</p>
+  <button class="cta" id="go">Raise the spyglass</button>
+  <button class="ghost" id="preview">Preview without camera</button>
+</div>
+
+<div id="hud">
+  <div class="top">
+    <canvas id="compass"></canvas>
+    <div class="row">
+      <span class="chip glass" id="q" data-q="none">Starting</span>
+      <span id="hdg">0°</span>
+      <span class="chip glass" id="gps" data-q="none">GPS –</span>
+    </div>
+  </div>
+  <button id="gear" class="glass" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
+  <div id="toast" class="glass"></div>
+  <div class="bottom">
+    <div id="cards"></div>
+    <div class="actions">
+      <button id="move">Move</button>
+      <button id="cancel" class="glass" hidden>Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="sheet" class="glass" hidden>
+  <div class="head"><h2>Calibration</h2><button id="close">Done</button></div>
+  <label>Camera field of view <output id="fov-v"></output></label>
+  <input type="range" id="fov" min="48" max="80" step="0.5">
+  <p class="hint">If objects slide against the background when you pan, adjust this until they stick.</p>
+  <label>Compass trim <output id="trim-v"></output></label>
+  <input type="range" id="trim" min="-30" max="30" step="0.5">
+  <label>Phone height above ground <output id="eye-v"></output></label>
+  <input type="range" id="eye" min="1" max="1.9" step="0.05">
+  <label>Walking</label>
+  <div class="seg" id="walk">
+    <button data-v="steps+gps">Steps + GPS</button><button data-v="gps">GPS only</button><button data-v="locked">Stand still</button>
+  </div>
+  <p class="hint">Steps + GPS moves you one stride per detected step and lets GPS correct slowly. Anchors hold still whenever you do.</p>
+  <div class="two"><button id="around">Drop anchors around me</button><button id="restore">Restore saved coordinates</button></div>
+  <pre id="debug"></pre>
+</div>
+<script>/*BUNDLE*/</script>
+</body>
+</html>

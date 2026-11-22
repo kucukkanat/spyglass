@@ -159,10 +159,10 @@ export class EighthWallProvider implements TrackingProvider {
     st.quality = normal ? "good" : "limited";
   }
 
-  /** A feature point on a real surface under the screen centre (table top, wall, kerb), if the engine has one. */
-  surfacePoint(origin: Vector3) {
+  /** A feature point on a real surface under a screen position (table top, wall, kerb), if the engine has one. */
+  surfacePoint(origin: Vector3, _dir?: Vector3, sx = 0.5, sy = 0.5) {
     try {
-      const hits = this.XR8?.XrController.hitTest(0.5, 0.5, ["FEATURE_POINT"]) as any[] | undefined;
+      const hits = this.XR8?.XrController.hitTest(sx, sy, ["FEATURE_POINT"]) as any[] | undefined;
       const h = hits?.[0];
       if (!h?.position) return null;
       const point = new Vector3(h.position.x, h.position.y, h.position.z).applyQuaternion(this.qYaw);

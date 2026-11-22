@@ -109,7 +109,7 @@ h1 span{color:var(--gold)}
 .adjust button:active{background:rgba(255,211,107,.25)}
 .actions{display:flex;gap:8px}
 #move{flex:1;padding:14px;border-radius:14px;font-family:var(--serif);font-size:16px;font-weight:600;color:#201400;background:linear-gradient(180deg,#ffe29a,#f0b03c)}
-#cancel{padding:14px 18px;border-radius:14px}
+#move:disabled{background:var(--panel);color:rgba(244,231,197,.8);border:1px solid var(--line);font-weight:500;font-size:14.5px}
 #toast{position:absolute;left:50%;top:calc(126px + var(--st));transform:translate(-50%,-8px);max-width:min(88vw,360px);padding:10px 16px;border-radius:14px;font-size:13.5px;line-height:1.4;text-align:center;
   opacity:0;transition:opacity .3s,transform .3s;pointer-events:none!important}
 #toast.on{opacity:1;transform:translate(-50%,0)}
@@ -196,8 +196,7 @@ input[type=range]{width:100%;accent-color:var(--gold);touch-action:pan-x}
       <span>Height</span><button id="lower" aria-label="Lower">↓</button><button id="raise" aria-label="Raise">↑</button>
     </div>
     <div class="actions">
-      <button id="move">Move</button>
-      <button id="cancel" class="glass" hidden>Cancel</button>
+      <button id="move" disabled>Tap a surface to place</button>
     </div>
   </div>
 </div>

@@ -32,7 +32,8 @@ export function initTogether(ctx: Ctx) {
   const nearby = new Map<string, Place>();
 
   const here = () => {
-    const st = ctx.engine().provider.state;
+    const st = ctx.engine()?.provider.state;
+    if (!st) return null;
     return st.geoOrigin ? toLatLon(st.geoOrigin, { e: st.position.x, n: -st.position.z }) : null;
   };
 

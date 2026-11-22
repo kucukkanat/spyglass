@@ -4,6 +4,8 @@ import { SensorTrackingProvider } from "./ar/sensor-provider";
 import { VioTrackingProvider, openVioCamera } from "./ar/vio-provider";
 import { EighthWallProvider } from "./ar/eighthwall-provider";
 import { DEFAULT_RELAYS, initTogether } from "./together";
+import { packFromBase64, packToBase64 } from "./vision/anchors";
+import { VisionPipeline } from "./vision/pipeline";
 import type { ProviderConfig, TrackingProvider, WalkMode } from "./ar/types";
 import { createBeacon } from "./objects/beacon";
 import { createChest } from "./objects/chest";
@@ -11,6 +13,7 @@ import { createShip } from "./objects/ship";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const STORE = "spyglass.anchors.v1";
+const OBJECTS = "spyglass.objects.v2";
 const PREFS = "spyglass.prefs.v1";
 
 const prefs = { fov: 63, trim: 0, eye: 1.5, walk: "steps+gps" as WalkMode, tracker: "8thwall" as "8thwall" | "visloc" | "compass", absolute: false, sharp: false, points: true, relays: DEFAULT_RELAYS, p2p: false, ...load(PREFS) };
@@ -29,6 +32,8 @@ const visual = () => provider instanceof VioTrackingProvider || provider instanc
 let selected = 0;
 let placing = false;
 let placedOnce = false;
+let vision: VisionPipeline | null = null;
+let trackingReady = false;
 
 const LAYOUT = [
   { id: "chest", name: "Captain's Hoard", icon: "chest", dist: 3.5, bearing: 0, make: createChest },
@@ -131,23 +136,33 @@ async function begin(forceDemo: boolean) {
   video.addEventListener("resize", () => engine.resize());
   for (const o of LAYOUT) engine.addAnchor(o.id, o.name, o.make());
   buildCards();
-  engine.onFrame = hud;
+  // Visual anchors need a 6DoF tracker and its camera feed.
+  if (feed && (provider instanceof EighthWallProvider || provider instanceof VioTrackingProvider)) {
+    vision = new VisionPipeline(engine, feed);
+    vision.onChange = () => (persist(), syncCards());
+  }
+  engine.onFrame = (t) => {
+    vision?.tick();
+    hud(t);
+  };
   engine.start();
   $("start").classList.add("gone");
   $("hud").classList.add("on");
 
-  if (provider instanceof DemoTrackingProvider) placeAround();
-  else {
+  if (provider instanceof DemoTrackingProvider) {
+    trackingReady = true;
+    placeAround();
+  } else {
     if (!visual()) toast("Hold the phone upright and look around slowly while the compass settles…", 4000);
     const wait = setInterval(() => {
       const ready = provider instanceof VioTrackingProvider || provider instanceof EighthWallProvider ? provider.settled && provider.state.dof === 6 : provider.state.quality !== "none";
-      if (ready && !placedOnce) {
-        clearInterval(wait);
-        setTimeout(() => {
-          placeAround();
-          toast("Three anchors dropped. Walk around them.");
-        }, visual() ? 600 : 1800);
-      }
+      if (!ready) return;
+      clearInterval(wait);
+      trackingReady = true;
+      // Objects left here earlier stay hidden until their surroundings are recognised.
+      const n = restoreObjects();
+      toast(n ? `Looking for ${n} object${n === 1 ? "" : "s"} you left nearby…` : "Tap a surface to place the selected object.", 4500);
+      syncCards();
     }, 200);
   }
 }
@@ -173,8 +188,29 @@ const together = initTogether({
   onRemoteChange: () => syncAdjust(),
 });
 
+/** Saved objects with a visual anchor go into "searching"; returns how many. */
+function restoreObjects() {
+  const saved = load(OBJECTS);
+  if (!vision || !Array.isArray(saved)) return 0;
+  let n = 0;
+  for (const s of saved) {
+    const a = engine.anchors.find((x) => x.id === s.id);
+    const pack = typeof s.pack === "string" ? packFromBase64(s.pack) : null;
+    if (a && pack) (vision.restore(a, pack, s.scale ?? 1), n++);
+  }
+  return n;
+}
+
 function persist() {
   for (const a of engine.anchors) together.share(a);
+  if (vision) {
+    const v = vision;
+    const objects = engine.anchors
+      .map((a) => ({ id: a.id, scale: v.tracked.get(a.id)?.scale && v.state(a) === "searching" ? v.tracked.get(a.id)!.scale : a.userScale, pack: v.pack(a), state: v.state(a), ...(engine.geoOf(a) ?? {}) }))
+      .filter((o) => o.pack && o.state !== "idle")
+      .map(({ pack, state, ...o }) => ({ ...o, pack: packToBase64(pack!) }));
+    save(OBJECTS, objects);
+  }
   const out = engine.anchors.map((a) => ({ id: a.id, yaw: a.yaw, y: a.group.position.y, scale: a.userScale, ...(engine.geoOf(a) ?? {}) }));
   if (out.every((o: any) => typeof o.lat === "number")) save(STORE, out);
 }
@@ -214,8 +250,11 @@ function syncAdjust() {
 function syncCards() {
   syncAdjust();
   document.querySelectorAll(".card").forEach((c, i) => c.classList.toggle("sel", i === selected));
-  $("move").textContent = placing ? "Drop it here" : `Move ${LAYOUT[selected].name}`;
-  $("cancel").hidden = !placing;
+  const a = engine?.anchors[selected], name = LAYOUT[selected].name;
+  const searching = !!a && vision?.state(a) === "searching";
+  const btn = $<HTMLButtonElement>("move");
+  btn.disabled = !a?.group.visible;
+  btn.textContent = a?.group.visible ? `Pick up ${name}` : searching ? `Looking for ${name}…` : `Tap a surface to place ${name}`;
 }
 
 let lastText = 0;
@@ -232,7 +271,7 @@ function hud(t: number) {
   lastText = t;
   engine.anchors.forEach((a, i) => {
     const b = cards[i]?.querySelector("b");
-    if (b) b.textContent = a.group.visible ? `${a.distance < 10 ? a.distance.toFixed(1) : a.distance.toFixed(0)} m` : "–";
+    if (b) b.textContent = a.group.visible ? `${a.distance < 10 ? a.distance.toFixed(1) : a.distance.toFixed(0)} m` : vision?.state(a) === "searching" ? "looking" : "–";
   });
   const q = $("q");
   q.dataset.q = st.quality;
@@ -260,6 +299,15 @@ function hud(t: number) {
         : []),
       `render    ${engine.fps.toFixed(0)} fps · fov ${engine.camera.fov.toFixed(1)}° vertical`,
       `heading   ${st.heading.toFixed(1)}°  ±${st.headingAccuracy?.toFixed(0) ?? "?"}°`,
+      ...(vision
+        ? [
+            `vision    ${vision.info.error || (vision.info.ready ? `${vision.info.features} features · ${vision.info.ms.toFixed(0)} ms per pass` : "not loaded yet")}`,
+            ...engine.anchors.map((a) => {
+              const t = vision!.tracked.get(a.id);
+              return `          ${a.id.padEnd(7)}${(t?.state ?? "idle").padEnd(10)} ${t?.pack ? `${t.pack.n} pts` : t?.gaveUp ? "no detail here" : "no anchor"}${t?.inliers ? ` · last match ${t.inliers}` : ""}`;
+            }),
+          ]
+        : []),
       `position  E ${st.position.x.toFixed(2)}  N ${(-st.position.z).toFixed(2)}  up ${st.position.y.toFixed(2)} m`,
       `sun       az ${engine.sun.azimuth.toFixed(0)}° alt ${engine.sun.altitude.toFixed(0)}°${engine.sun.real ? "" : " (default, sun is down)"}`,
       `anchor    ${g ? `${g.lat.toFixed(7)}, ${g.lon.toFixed(7)}` : "no GPS fix yet"}`,
@@ -311,23 +359,32 @@ function drawCompass(heading: number, anchors: Anchor[]) {
 // ---- wiring ----
 $("go").addEventListener("click", () => begin(false));
 $("preview").addEventListener("click", () => begin(true));
-$("move").addEventListener("click", () => {
-  if (!placing) {
-    placing = true;
-    engine.reticle.visible = true;
-    toast("Aim the ring at the ground, then drop.");
-  } else {
-    const p = engine.groundPoint();
-    const st = provider.state;
-    const a = engine.anchors[selected];
-    const yaw = (Math.atan2(p.x - st.position.x, -(p.z - st.position.z)) * 180) / Math.PI;
-    a.place(p.x, -p.z, yaw, p.y);
-    placing = false;
-    engine.reticle.visible = false;
-    persist();
-  }
+// Tap the camera view to put the selected object on the surface under your finger.
+let down: { x: number; y: number; t: number } | null = null;
+$("gl").addEventListener("pointerdown", (e) => (down = e.isPrimary ? { x: e.clientX, y: e.clientY, t: performance.now() } : null));
+$("gl").addEventListener("pointerup", (e) => {
+  const d = down;
+  down = null;
+  if (!d || !engine || !trackingReady || pinch || !$("mark").hidden) return;
+  if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10 || performance.now() - d.t > 800) return; // a drag or a long press, not a tap
+  if (visual() && provider.state.dof !== 6) return toast("Tracking isn't ready yet. Move the phone slowly.");
+  const p = engine.groundPointAt(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+  const st = provider.state, a = engine.anchors[selected];
+  a.place(p.x, -p.z, (Math.atan2(p.x - st.position.x, -(p.z - st.position.z)) * 180) / Math.PI, p.y);
+  vision?.placed(a);
+  placedOnce = true;
+  persist();
   syncCards();
 });
+$("move").addEventListener("click", () => {
+  const a = engine.anchors[selected];
+  if (!a.group.visible) return;
+  a.group.visible = false;
+  vision?.remove(a);
+  persist();
+  syncCards();
+});
+
 // Size and height of the selected object: buttons, or pinch with two fingers.
 const adjust = (fn: (a: Anchor) => void) => () => {
   const a = engine.anchors[selected];
@@ -352,11 +409,6 @@ $("gl").addEventListener("touchend", () => {
   if (pinch) (pinch = null), persist();
 });
 
-$("cancel").addEventListener("click", () => {
-  placing = false;
-  engine.reticle.visible = false;
-  syncCards();
-});
 $("gear").addEventListener("click", () => ($("sheet").hidden = false));
 $("close").addEventListener("click", () => ($("sheet").hidden = true));
 $("around").addEventListener("click", () => {

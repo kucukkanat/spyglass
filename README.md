@@ -22,5 +22,7 @@ bun run build.ts   # writes the single-file app to index.html
 - `src/ar/sensor-provider.ts`: gyro + compass + step + GPS tracker (heading seed and fallback)
 - `vio/`, `coi-sw.js`: vendored visloc-rs browser build, MIT OR Apache-2.0 (see `vio/NOTICE.md`)
 - `src/ar/engine.ts`: rendering, anchors, sun lighting, shadows
+- `src/vision/`: visual anchors. ORB features, triangulated anchor packs and PnP pose recovery (`anchors.ts`), and the runtime that captures silently, shows saved objects only once recognised, and corrects drift (`pipeline.ts`). `selftest/` is a synthetic end-to-end check
+- `external/opencv.js`: OpenCV.js 4.10 (Apache-2.0), unmodified, from `@techstark/opencv-js`
 - `src/together.ts`, `src/net/`: shared places over Nostr (kinds 37517 place, 37518 object state, 25517 live/presence/signalling), two-point alignment (`src/ar/shared-frame.ts`), optional WebRTC peer-to-peer for live updates
 - `src/objects/`: the three example objects

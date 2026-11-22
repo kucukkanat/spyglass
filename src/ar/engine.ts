@@ -175,13 +175,18 @@ export class AREngine {
 
   /** Point on the ground under the screen centre, or a fallback ahead of the player. */
   groundPoint(fallbackDist = 6) {
+    return this.groundPointAt(0.5, 0.5, fallbackDist);
+  }
+
+  /** Point on a real surface or the floor under a screen position (0..1 from the top-left). */
+  groundPointAt(sx: number, sy: number, fallbackDist = 6) {
     const cam = this.camera;
     this.ray.origin.copy(cam.position);
-    this.ray.direction.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    this.ray.direction.set(2 * sx - 1, 1 - 2 * sy, 0.5).applyMatrix4(cam.projectionMatrixInverse).normalize().applyQuaternion(cam.quaternion);
     const d = this.ray.direction;
     let t = d.y < -0.05 ? -cam.position.y / d.y : Infinity;
     // Prefer a real surface the tracker has mapped (table top, wall, kerb) when it is nearer than the floor.
-    const hit = this.provider.surfacePoint?.(this.ray.origin, d);
+    const hit = this.provider.surfacePoint?.(this.ray.origin, d, sx, sy);
     if (hit && hit.depth < t - 0.25) return hit.point;
     if (!isFinite(t) || t > 40) {
       const h = Math.hypot(d.x, d.z) || 1;

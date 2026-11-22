@@ -36,7 +36,7 @@ export interface TrackingProvider {
   /** Sparse map points in the local frame, when the tracker builds one. */
   readonly landmarks?: { positions: Float32Array; count: number; version: number } | null;
   /** Nearest mapped surface along a ray (local frame), or null. */
-  surfacePoint?(origin: Vector3, dir: Vector3): { point: Vector3; depth: number } | null;
+  surfacePoint?(origin: Vector3, dir: Vector3, sx?: number, sy?: number): { point: Vector3; depth: number } | null;
   /** Short status for the HUD. */
   readonly statusText?: string;
   /** Instruction to show the player while tracking is not established. */
